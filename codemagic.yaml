@@ -23,6 +23,13 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter packages pub get
+      - name: Clean iOS Pods cache
+        script: |
+          cd ios
+          rm -rf Pods
+          rm -rf Podfile.lock
+          rm -rf ~/Library/Caches/CocoaPods
+          pod cache clean --all || true
       - name: Install CocoaPods dependencies
         script: |
           cd ios && pod install
@@ -64,6 +71,13 @@ workflows:
       - name: Get Flutter packages
         script: |
           flutter packages pub get
+      - name: Clean iOS Pods cache
+        script: |
+          cd ios
+          rm -rf Pods
+          rm -rf Podfile.lock
+          rm -rf ~/Library/Caches/CocoaPods
+          pod cache clean --all || true
       - name: Install CocoaPods dependencies
         script: |
           cd ios && pod install
