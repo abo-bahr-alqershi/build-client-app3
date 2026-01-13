@@ -12,9 +12,6 @@ import FirebaseCore
       let bundleId = Bundle.main.bundleIdentifier ?? "(nil)"
       if let filePath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
          let options = FirebaseOptions(contentsOfFile: filePath) {
-        if let runtimeBundleId = Bundle.main.bundleIdentifier {
-          options.bundleID = runtimeBundleId
-        }
         FirebaseApp.configure(options: options)
         NSLog("Firebase configured. bundleId=\(bundleId) plistPath=\(filePath)")
       } else {
