@@ -8,9 +8,9 @@ workflows:
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: com.hggzk.app.UF3CJWM5AP
+        bundle_identifier: com.hggzk.app
       vars:
-        BUNDLE_ID: "com.hggzk.app.UF3CJWM5AP"
+        BUNDLE_ID: "com.hggzk.app"
         XCODE_WORKSPACE: "ios/Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
       flutter: stable
@@ -56,9 +56,9 @@ workflows:
     environment:
       ios_signing:
         distribution_type: development
-        bundle_identifier: com.hggzk.app.UF3CJWM5AP
+        bundle_identifier: com.hggzk.app
       vars:
-        BUNDLE_ID: "com.hggzk.app.UF3CJWM5AP"
+        BUNDLE_ID: "com.hggzk.app"
         XCODE_WORKSPACE: "ios/Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
       flutter: stable

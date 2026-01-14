@@ -1,4 +1,4 @@
-package com.hggzk.app.UF3CJWM5AP
+package com.hggzk.app
 
 import io.flutter.embedding.android.FlutterActivity
 

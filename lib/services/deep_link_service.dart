@@ -162,11 +162,11 @@ class DeepLinkService {
       ),
       uriPrefix: 'https://hggzk.page.link',
       androidParameters: const AndroidParameters(
-        packageName: 'com.hggzk.app.UF3CJWM5AP',
+        packageName: 'com.hggzk.app',
         minimumVersion: 1,
       ),
       iosParameters: const IOSParameters(
-        bundleId: 'com.hggzk.app.UF3CJWM5AP',
+        bundleId: 'com.hggzk.app',
         minimumVersion: '1.0.0',
         appStoreId: '123456789',
       ),
