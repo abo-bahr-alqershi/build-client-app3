@@ -75,6 +75,12 @@ post_install do |installer|
         config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
       end
       
+      # CRITICAL FIX: url_launcher_ios privacy bundle issue
+      if target.name == 'url_launcher_ios'
+        config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'org.cocoapods.${PRODUCT_NAME:rfc1034identifier}'
+        config.build_settings['SKIP_INSTALL'] = 'YES'
+      end
+      
       # Exclude simulator architectures
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
     end

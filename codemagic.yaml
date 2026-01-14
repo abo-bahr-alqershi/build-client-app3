@@ -22,7 +22,26 @@ workflows:
           pod deintegrate
           pod install --repo-update
           cd ..
+      
+      - name: Fix privacy bundle build issue (url_launcher_ios)
+        script: |
+          # CRITICAL FIX: url_launcher_ios privacy bundle build failure
+          # This is a known issue with CocoaPods + Flutter on Xcode 15+
+          
+          # Clean any corrupted build artifacts
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          
+          # Force clean and rebuild
+          flutter clean
+          flutter pub get
+          
+          # Reinstall pods after clean
+          cd ios
+          pod install --repo-update
+          cd ..
           
       - name: Build iOS
         script: |
-          flutter build ipa --debug --export-options-plist /Users/builder/export_options.plist
+          # Use --release instead of --debug to avoid privacy bundle issues
+          flutter build ipa --release \
+            --export-options-plist /Users/builder/export_options.plist
