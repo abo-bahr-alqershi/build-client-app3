@@ -8,19 +8,18 @@ import FirebaseCore
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // CRITICAL: Configure Firebase BEFORE registering any plugins
+    // This prevents crash in FirebaseAnalyticsPlugin.register(with:)
+    // which tries to access Firebase instance before it's ready
+    
     if FirebaseApp.app() == nil {
-      let bundleId = Bundle.main.bundleIdentifier ?? "(nil)"
-      if let filePath = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist"),
-         let options = FirebaseOptions(contentsOfFile: filePath) {
-        FirebaseApp.configure(options: options)
-        NSLog("Firebase configured. bundleId=\(bundleId) plistPath=\(filePath)")
-      } else {
-        NSLog("Firebase NOT configured: GoogleService-Info.plist not found in app bundle. bundleId=\(bundleId)")
-      }
-    } else {
-      NSLog("Firebase already configured; skipping configure()")
+      // Use default configuration from GoogleService-Info.plist
+      FirebaseApp.configure()
     }
+    
+    // Now safe to register all Flutter plugins
     GeneratedPluginRegistrant.register(with: self)
+    
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 }
