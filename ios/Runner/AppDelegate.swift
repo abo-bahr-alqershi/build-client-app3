@@ -8,16 +8,17 @@ import FirebaseCore
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    // CRITICAL: Configure Firebase BEFORE registering any plugins
-    // This prevents crash in FirebaseAnalyticsPlugin.register(with:)
-    // which tries to access Firebase instance before it's ready
+    // CRITICAL FIX: The GeneratedPluginRegistrant registers FirebaseAnalyticsPlugin
+    // BEFORE FLTFirebaseCorePlugin, which causes a crash because Analytics
+    // tries to access Firebase before it's initialized.
     
+    // Step 1: Configure Firebase FIRST before ANY plugin registration
     if FirebaseApp.app() == nil {
-      // Use default configuration from GoogleService-Info.plist
       FirebaseApp.configure()
     }
     
-    // Now safe to register all Flutter plugins
+    // Step 2: Register all plugins
+    // Firebase is now configured, so FirebaseAnalyticsPlugin won't crash
     GeneratedPluginRegistrant.register(with: self)
     
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)

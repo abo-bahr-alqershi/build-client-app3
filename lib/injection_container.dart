@@ -651,9 +651,9 @@ void _initPropertyFeature() {
       property_reviews_usecase.GetPropertyReviewsUseCase(repository: sl()));
   sl.registerLazySingleton(() => AddToFavoritesUseCase(repository: sl()));
   sl.registerLazySingleton(() => RemoveFromFavoritesUseCase(repository: sl()));
-   sl.registerLazySingleton(
-      () => CheckPropertyAvailabilityUseCase(repository: sl()),
-   );
+  sl.registerLazySingleton(
+    () => CheckPropertyAvailabilityUseCase(repository: sl()),
+  );
 
   // Repository
   sl.registerLazySingleton<PropertyRepository>(
@@ -769,7 +769,7 @@ void _initCore() {
         localStorage: sl(),
         authLocalDataSource: sl(),
       ));
-  sl.registerLazySingleton(() => AnalyticsService());
+  // sl.registerLazySingleton(() => AnalyticsService());
   sl.registerLazySingleton(() => DeepLinkService());
 
   // Data Management Services
