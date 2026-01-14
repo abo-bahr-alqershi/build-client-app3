@@ -46,15 +46,24 @@
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>نحتاج إلى موقعك لعرض العقارات القريبة منك</string>
+	<string>نحتاج إلى موقعك لعرض العقارات القريبة منك وتحديد موقعك على الخريطة</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>نحتاج إلى موقعك لعرض العقارات القريبة منك</string>
-    <!-- Camera and Photo Library permissions -->
-    <key>NSCameraUsageDescription</key>
-    <string>نحتاج لاستخدام الكاميرا لالتقاط صورة الملف الشخصي</string>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>نحتاج للوصول إلى مكتبة الصور لاختيار صورة الملف الشخصي</string>
-    <key>NSPhotoLibraryAddUsageDescription</key>
-    <string>نحتاج للإذن لحفظ الصور المُعدلة إلى مكتبة الصور</string>
+	<string>نحتاج إلى موقعك لعرض العقارات القريبة منك حتى عندما لا تستخدم التطبيق</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>نحتاج إلى موقعك لعرض العقارات والفنادق القريبة منك وتحديد موقعك على الخريطة بشكل مستمر</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>نحتاج للوصول إلى الميكروفون لتسجيل الملاحظات الصوتية</string>
+	<key>NSCameraUsageDescription</key>
+	<string>نحتاج لاستخدام الكاميرا لالتقاط صورة الملف الشخصي وصور العقارات</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>نحتاج للوصول إلى مكتبة الصور لاختيار صورة الملف الشخصي وصور العقارات</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>نحتاج للإذن لحفظ الصور المُعدلة إلى مكتبة الصور</string>
+	<key>NSContactsUsageDescription</key>
+	<string>نحتاج للوصول إلى جهات الاتصال لمشاركة معلومات الحجز</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>نحتاج للوصول إلى التقويم لإضافة تذكيرات الحجز</string>
+	<key>NSUserTrackingUsageDescription</key>
+	<string>نستخدم بياناتك لتحسين تجربتك وعرض محتوى مخصص لك</string>
 </dict>
 </plist>
