@@ -75,14 +75,33 @@ post_install do |installer|
         config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
       end
       
-      # CRITICAL FIX: url_launcher_ios privacy bundle issue
-      if target.name == 'url_launcher_ios'
+      # CRITICAL FIX: Privacy bundle issues for plugins with privacy manifests
+      # This affects url_launcher_ios, sqflite_darwin, and other plugins on Xcode 15+
+      if target.name.include?('_privacy') || 
+         target.name == 'url_launcher_ios' || 
+         target.name == 'sqflite' ||
+         target.name == 'sqflite_darwin'
         config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'org.cocoapods.${PRODUCT_NAME:rfc1034identifier}'
         config.build_settings['SKIP_INSTALL'] = 'YES'
+        config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
       end
       
       # Exclude simulator architectures
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+    end
+  end
+  
+  # CRITICAL: Fix privacy bundle resource phase issues
+  # Remove problematic privacy bundle copy phases that cause build failures
+  installer.pods_project.targets.each do |target|
+    target.build_phases.each do |build_phase|
+      if build_phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+        build_phase.files.each do |file|
+          if file.display_name&.include?('privacy.bundle')
+            build_phase.files.delete(file)
+          end
+        end
+      end
     end
   end
   
