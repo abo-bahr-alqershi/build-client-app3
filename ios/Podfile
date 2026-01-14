@@ -1,8 +1,11 @@
-# Uncomment this line to define a global platform for your project
 platform :ios, '14.0'
 
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+# Flutter Settings
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+ENV['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+
+# Fix for Swift plugins
+ENV['SWIFT_VERSION'] = '5.0'
 
 project 'Runner', {
   'Debug' => :debug,
@@ -13,14 +16,14 @@ project 'Runner', {
 def flutter_root
   generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
   unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+    raise "#{generated_xcode_build_settings_path} must exist."
   end
 
   File.foreach(generated_xcode_build_settings_path) do |line|
     matches = line.match(/FLUTTER_ROOT\=(.*)/)
     return matches[1].strip if matches
   end
-  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+  raise "FLUTTER_ROOT not found"
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
@@ -33,6 +36,10 @@ target 'Runner' do
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
   
+  # Fix for Swift plugins
+  pod 'GoogleSignIn', :modular_headers => true
+  pod 'FBSDKLoginKit', :modular_headers => true
+  
   target 'RunnerTests' do
     inherit! :search_paths
   end
@@ -41,8 +48,44 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    
     target.build_configurations.each do |config|
+      # Base settings
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+      config.build_settings['ENABLE_BITCODE'] = 'NO'
+      
+      # Swift settings - CRITICAL
+      config.build_settings['SWIFT_VERSION'] = '5.0'
+      config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
+      config.build_settings['SWIFT_OPTIMIZATION_LEVEL'] = '-Onone'
+      config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
+      config.build_settings['SWIFT_WHOLE_MODULE_OPTIMIZATION'] = 'NO'
+      
+      # Module settings
+      config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
+      config.build_settings['SWIFT_INSTALL_OBJC_HEADER'] = 'YES'
+      config.build_settings['DEFINES_MODULE'] = 'YES'
+      
+      # Fix for specific plugins
+      if target.name == 'flutter_facebook_auth'
+        config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG'
+      end
+      
+      if target.name == 'google_sign_in_ios' 
+        config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
+      end
+      
+      # Exclude simulator architectures
+      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+    end
+  end
+  
+  # Fix file permissions (important for CI/CD)
+  installer.pods_project.targets.each do |target|
+    shell_script_path = "#{installer.pods_project.path}/../.symlinks/plugins/#{target.name}/ios"
+    if File.exist?(shell_script_path)
+      chmod_command = "chmod -R 755 #{shell_script_path}"
+      system(chmod_command)
     end
   end
 end

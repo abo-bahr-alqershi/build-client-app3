@@ -1,107 +1,28 @@
 workflows:
-  ios-release:
-    name: iOS Release Build
-    max_build_duration: 120
-    instance_type: mac_mini_m2
-    integrations:
-      app_store_connect: codemagic
-    environment:
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: com.hggzk.app
-      vars:
-        BUNDLE_ID: "com.hggzk.app"
-        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
-        XCODE_SCHEME: "Runner"
-      flutter: stable
-      xcode: latest
-      cocoapods: default
+  ios-workflow:
     scripts:
-      - name: Set up code signing settings on Xcode project
+      - name: Set up code signing settings
         script: |
           xcode-project use-profiles
-      - name: Get Flutter packages
+          
+      - name: Fix Swift issues
         script: |
-          flutter packages pub get
-      - name: Clean iOS Pods cache
-        script: |
-          cd ios
-          rm -rf Pods
-          rm -rf Podfile.lock
-          rm -rf ~/Library/Caches/CocoaPods
-          pod cache clean --all || true
-      - name: Install CocoaPods dependencies
-        script: |
-          cd ios && pod install
-      - name: Flutter build IPA
-        script: |
-          flutter build ipa --release \
-            --export-options-plist=/Users/builder/export_options.plist
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
-    publishing:
-      email:
-        recipients:
-          - ameenmamwn7@gmail.com
-        notify:
-          success: true
-          failure: true
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
-        beta_groups:
-          - App Store Connect Users
-
-  ios-development:
-    name: iOS Development Build
-    max_build_duration: 120
-    instance_type: mac_mini_m2
-    environment:
-      ios_signing:
-        distribution_type: development
-        bundle_identifier: com.hggzk.app
-      vars:
-        BUNDLE_ID: "com.hggzk.app"
-        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
-        XCODE_SCHEME: "Runner"
-      flutter: stable
-      xcode: latest
-      cocoapods: default
-    scripts:
-      - name: Set up code signing settings on Xcode project
-        script: |
-          xcode-project use-profiles
-      - name: Get Flutter packages
-        script: |
-          flutter packages pub get
-      - name: Clean iOS Pods cache
+          # Clean build folder
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ios/Pods
+          rm -f ios/Podfile.lock
+          
+          # Set Swift version
+          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
+          
+      - name: Install pods
         script: |
           cd ios
-          rm -rf Pods
-          rm -rf Podfile.lock
-          rm -rf ~/Library/Caches/CocoaPods
-          pod cache clean --all || true
-      - name: Install CocoaPods dependencies
+          pod cache clean --all
+          pod deintegrate
+          pod install --repo-update
+          cd ..
+          
+      - name: Build iOS
         script: |
-          cd ios && pod install
-      - name: Flutter build IPA (Development)
-        script: |
-          flutter build ipa --release \
-            --export-options-plist=/Users/builder/export_options.plist
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
-    publishing:
-      email:
-        recipients:
-          - ameenmamwn7@gmail.com
-        notify:
-          success: true
-          failure: true
-      app_store_connect:
-        auth: integration
-        submit_to_testflight: true
-        beta_groups:
-          - App Store Connect Users
+          flutter build ipa --debug --export-options-plist /Users/builder/export_options.plist
