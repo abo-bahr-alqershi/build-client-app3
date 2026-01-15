@@ -216,6 +216,7 @@ jobs:
           echo "Export Method: $EXPORT_METHOD"
           
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
           echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
           echo "EXPORT_METHOD=$EXPORT_METHOD" >> "$GITHUB_ENV"
           
@@ -237,6 +238,7 @@ jobs:
           echo "Bundle ID: $BUNDLE_ID"
           echo "Team ID: ${TEAM_ID:-NOT_SET}"
           echo "Profile Name: ${PROFILE_NAME:-NOT_SET}"
+          echo "Profile UUID: ${PROFILE_UUID:-NOT_SET}"
           echo "Export Method: ${EXPORT_METHOD:-NOT_SET}"
           
           if [ -z "${EXPORT_METHOD:-}" ]; then
@@ -247,10 +249,15 @@ jobs:
             echo "❌ TEAM_ID not set"
             exit 1
           fi
-          if [ -z "${PROFILE_NAME:-}" ]; then
-            echo "❌ PROFILE_NAME not set"
+          if [ -z "${PROFILE_UUID:-}" ]; then
+            echo "❌ PROFILE_UUID not set"
             exit 1
           fi
+          echo ""
+          
+          # استخراج signing identity من الـ keychain
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Apple Development" | head -1 | sed -E 's/.*"(.+)".*/\1/')
+          echo "Signing Identity: $SIGNING_IDENTITY"
           echo ""
 
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
@@ -265,10 +272,12 @@ jobs:
             <string>manual</string>
             <key>teamID</key>
             <string>${TEAM_ID}</string>
+            <key>signingCertificate</key>
+            <string>${SIGNING_IDENTITY}</string>
             <key>provisioningProfiles</key>
             <dict>
               <key>${BUNDLE_ID}</key>
-              <string>${PROFILE_NAME}</string>
+              <string>${PROFILE_UUID}</string>
             </dict>
             <key>compileBitcode</key>
             <false/>
@@ -294,10 +303,23 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
             archive
 
-          xcodebuild -exportArchive \
+          echo ""
+          echo "--- Exporting IPA ---"
+          if xcodebuild -exportArchive \
             -archivePath build/Runner.xcarchive \
             -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
-            -exportPath build/ipa
+            -exportPath build/ipa \
+            -verbose; then
+            echo "✅ Export succeeded"
+          else
+            echo "❌ Export failed"
+            echo ""
+            echo "--- Debugging info ---"
+            security find-identity -v -p codesigning
+            echo ""
+            ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+            exit 1
+          fi
 
           ls -la build/ipa
 
