@@ -199,11 +199,10 @@ class AppBloc {
     ),
     // Core Application Blocs
     BlocProvider<SplashBloc>(
-      create: (context) => sl<SplashBloc>()..add(const PreloadAppDataEvent()),
+      create: (context) => splashBloc,
     ),
     BlocProvider<OnboardingBloc>(
-      create: (context) =>
-          sl<OnboardingBloc>()..add(const CheckFirstRunEvent()),
+      create: (context) => onboardingBloc,
     ),
     // Reference Bloc
     BlocProvider<ReferenceBloc>(
@@ -213,7 +212,7 @@ class AppBloc {
       create: (context) => authBloc,
     ),
     BlocProvider<SettingsBloc>(
-      create: (context) => settingsBloc..add(LoadSettingsEvent()),
+      create: (context) => settingsBloc,
     ),
     BlocProvider<NotificationBloc>(
       create: (context) => notificationBloc,
@@ -270,6 +269,12 @@ class AppBloc {
   static void initializeEvents() {
     // Check authentication status on app start
     authBloc.add(const CheckAuthStatusEvent());
+
+    // Preload splash data
+    splashBloc.add(const PreloadAppDataEvent());
+
+    // Check first run
+    onboardingBloc.add(const CheckFirstRunEvent());
 
     // Load settings
     settingsBloc.add(LoadSettingsEvent());
