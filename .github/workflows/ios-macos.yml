@@ -374,21 +374,15 @@ jobs:
             # الطريقة الثانية: استخدام xcrun xcodebuild مع minimal ExportOptions
             echo "🔧 Using Alternative Method: xcrun with minimal options"
             
-            # إنشاء minimal ExportOptions.plist
+            # إنشاء minimal ExportOptions.plist باستخدام PlistBuddy
             MINIMAL_EXPORT_OPTIONS="$RUNNER_TEMP/MinimalExportOptions.plist"
             
-            # إنشاء plist بسيط جداً فقط بالضروريات
-            cat > "$MINIMAL_EXPORT_OPTIONS" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>compileBitcode</key>
-  <false/>
-</dict>
-</plist>
-EOF
+            # إنشاء plist جديد
+            /usr/libexec/PlistBuddy -c "Save" "$MINIMAL_EXPORT_OPTIONS" 2>/dev/null || true
+            /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$MINIMAL_EXPORT_OPTIONS"
             
+            # تحويل إلى XML للعرض
+            plutil -convert xml1 "$MINIMAL_EXPORT_OPTIONS"
             echo "Minimal ExportOptions.plist:"
             cat "$MINIMAL_EXPORT_OPTIONS"
             echo ""
