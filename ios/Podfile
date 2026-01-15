@@ -16,45 +16,25 @@ project 'Runner', {
 def flutter_root
   generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
   unless File.exist?(generated_xcode_build_settings_path)
-    raise "#{generated_xcode_build_settings_path} must exist."
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
   end
 
   File.foreach(generated_xcode_build_settings_path) do |line|
     matches = line.match(/FLUTTER_ROOT\=(.*)/)
     return matches[1].strip if matches
   end
-  raise "FLUTTER_ROOT not found"
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
 
 flutter_ios_podfile_setup
 
-# Pre-install fixes
-pre_install do |installer|
-  # Fix for url_launcher and other privacy manifest issues
-  installer.pod_targets.each do |pod|
-    if pod.name.include?('url_launcher') || 
-       pod.name.include?('sqflite') ||
-       pod.name.include?('_privacy')
-      def pod.build_type
-        Pod::BuildType.static_library
-      end
-    end
-  end
-end
-
 target 'Runner' do
-  use_frameworks! :linkage => :static
+  use_frameworks!
   use_modular_headers!
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
-  
-  # Explicit pod declarations for problematic plugins
-  pod 'url_launcher_ios', :modular_headers => true
-  pod 'GoogleSignIn', :modular_headers => true
-  pod 'FBSDKLoginKit', :modular_headers => true
-  pod 'sqflite', :modular_headers => true
   
   target 'RunnerTests' do
     inherit! :search_paths
@@ -62,56 +42,73 @@ target 'Runner' do
 end
 
 post_install do |installer|
-  # Apply Flutter settings
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
-  end
-  
-  # Configure all targets
-  installer.pods_project.targets.each do |target|
+    
     target.build_configurations.each do |config|
       # Base Configuration
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
       
-      # Swift Configuration
+      # Swift Configuration - CRITICAL for fixing crashes
       config.build_settings['SWIFT_VERSION'] = '5.0'
       config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
       config.build_settings['SWIFT_OPTIMIZATION_LEVEL'] = '-Onone'
       config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
+      config.build_settings['SWIFT_WHOLE_MODULE_OPTIMIZATION'] = 'NO'
       
       # Module Configuration
       config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
       config.build_settings['SWIFT_INSTALL_OBJC_HEADER'] = 'YES'
       config.build_settings['DEFINES_MODULE'] = 'YES'
       
-      # Fix for Privacy Manifests
+      # Fix for Privacy Manifests (url_launcher issue)
       config.build_settings['GENERATE_INFOPLIST_FILE'] = 'NO'
       config.build_settings['SKIP_INSTALL'] = 'NO'
+      config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'NO'
       
       # Plugin-specific fixes
-      case target.name
-      when 'flutter_facebook_auth'
+      if target.name == 'flutter_facebook_auth'
         config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG'
-      when 'google_sign_in_ios'
-        config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
-      when 'url_launcher_ios', 'sqflite', 'sqflite_darwin'
-        config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'YES'
-        config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "org.cocoapods.#{target.name}"
+        config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -D DEBUG'
       end
       
-      # Architecture exclusions
+      if target.name == 'google_sign_in_ios'
+        config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
+      end
+      
+      # Fix for url_launcher and sqflite privacy bundles
+      if target.name.include?('url_launcher') || target.name.include?('sqflite')
+        config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "org.cocoapods.#{target.name.gsub('_', '-')}"
+        config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+      end
+      
+      # Architecture exclusions for simulator
       config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+      
+      # Additional stability settings
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = '$(inherited) COCOAPODS=1'
+      config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Foundation'
     end
   end
   
-  # Remove problematic build phases
+  # Remove privacy bundle references that cause build failures
   installer.pods_project.targets.each do |target|
     target.build_phases.each do |phase|
+      # Remove resource build phases for privacy bundles
       if phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase)
-        phase.files.each do |file|
-          if file.display_name&.include?('privacy') || 
-             file.display_name&.include?('PrivacyInfo')
+        phase.files.select do |file|
+          if file.display_name && (file.display_name.include?('privacy') || 
+                                   file.display_name.include?('PrivacyInfo'))
+            phase.remove_build_file(file)
+          end
+        end
+      end
+      
+      # Remove copy files build phases for privacy bundles
+      if phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+        phase.files.select do |file|
+          if file.display_name && file.display_name.include?('privacy')
             phase.remove_build_file(file)
           end
         end
@@ -119,14 +116,11 @@ post_install do |installer|
     end
   end
   
-  # Fix Runner project references
-  installer.aggregate_targets.each do |target|
-    xcconfig_path = target.xcconfig_path(config.name)
-    xcconfig = File.read(xcconfig_path)
-    xcconfig.gsub!(/privacy\.bundle/, '')
-    File.open(xcconfig_path, 'w') { |file| file.write(xcconfig) }
+  # Fix permissions
+  installer.pods_project.build_configurations.each do |config|
+    config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
   end
   
-  # Save all changes
+  # Save changes
   installer.pods_project.save
 end
