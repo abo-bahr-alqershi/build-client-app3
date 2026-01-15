@@ -1,66 +1,42 @@
+# Codemagic CI/CD Configuration for iOS Build - DEBUG MODE
 workflows:
-  ios-workflow:
+  default-workflow:
+    name: iOS Build Debug
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    environment:
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.hggzk.app
+      flutter: stable
+      xcode: latest
+      cocoapods: default
     scripts:
-      - name: Set up code signing settings
-        script: |
-          xcode-project use-profiles
+      - name: Setup code signing
+        script: xcode-project use-profiles
           
-      - name: Fix Swift issues
+      - name: Clean environment
         script: |
-          # Clean build folder
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-          rm -rf ios/Pods
-          rm -f ios/Podfile.lock
-          
-          # Set Swift version
+          rm -rf ~/Library/Developer/Xcode/DerivedData ios/Pods ios/Podfile.lock
           echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
           
       - name: Install pods
-        script: |
-          cd ios
-          pod cache clean --all
-          pod deintegrate || true
-          pod install --repo-update
-          cd ..
+        script: cd ios && pod install --repo-update && cd ..
       
-      - name: Fix privacy bundle build issues (Critical for Xcode 15+)
+      - name: Remove privacy bundles
         script: |
-          # CRITICAL FIX: Privacy bundle build failures
-          # Affects: url_launcher_ios, sqflite_darwin, and other plugins with privacy manifests
-          
-          # Clean all corrupted build artifacts
-          rm -rf ~/Library/Developer/Xcode/DerivedData/*
-          
-          # Remove problematic privacy bundle references from Xcode project
           cd ios
-          
-          # Use Ruby to remove privacy bundle file references from Runner.xcodeproj
-          ruby -e "
-          require 'xcodeproj'
-          project_path = 'Runner.xcodeproj'
-          project = Xcodeproj::Project.open(project_path)
-          
-          project.targets.each do |target|
-            next unless target.name == 'Runner'
-            
-            target.build_phases.each do |phase|
-              phase.files.to_a.each do |file|
-                if file.file_ref && file.file_ref.path && file.file_ref.path.include?('privacy.bundle')
-                  puts \"Removing: #{file.file_ref.path}\"
-                  phase.remove_file_reference(file.file_ref)
-                end
-              end
-            end
-          end
-          
-          project.save
-          puts 'Privacy bundle references removed successfully'
-          " || echo "Ruby script failed, continuing..."
-          
+          ruby -e 'require "xcodeproj"; p=Xcodeproj::Project.open("Runner.xcodeproj"); p.targets.each{|t| next unless t.name=="Runner"; t.build_phases.each{|ph| ph.files.to_a.each{|f| ph.files.delete(f) if f.file_ref&&f.file_ref.path&&f.file_ref.path.include?("privacy.bundle")}}}; p.save' || true
           cd ..
           
-      - name: Build iOS
-        script: |
-          # Use --release mode which has better plugin compatibility
-          flutter build ipa --release \
-            --export-options-plist /Users/builder/export_options.plist
+      - name: Build iOS DEBUG
+        script: flutter build ipa --debug --export-options-plist /Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - ameenmamwn7@gmail.com
+        notify:
+          success: true
+          failure: true

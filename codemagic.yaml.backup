@@ -1,0 +1,165 @@
+# Codemagic CI/CD Configuration for iOS Build
+# 
+# CRITICAL NOTES:
+# 1. DO NOT use --debug mode for iOS builds (causes privacy bundle failures)
+# 2. ALWAYS use --release mode 
+# 3. Privacy bundle fix is applied automatically in pod install
+# 4. If build fails with privacy bundle errors, check that --release is used
+#
+# Default workflow: default-workflow (automatically selected)
+# Alternative: ios-workflow (legacy)
+
+workflows:
+  # Default workflow - will be used if no specific workflow is selected
+  default-workflow:
+    name: iOS Build (Default)
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+    environment:
+      ios_signing:
+        distribution_type: development
+        bundle_identifier: com.hggzk.app
+      vars:
+        BUNDLE_ID: "com.hggzk.app"
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Set up code signing settings
+        script: |
+          xcode-project use-profiles
+          
+      - name: Fix Swift issues
+        script: |
+          # Clean build folder
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ios/Pods
+          rm -f ios/Podfile.lock
+          
+          # Set Swift version
+          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
+          
+      - name: Install pods
+        script: |
+          cd ios
+          pod cache clean --all
+          pod deintegrate || true
+          pod install --repo-update
+          cd ..
+      
+      - name: Fix privacy bundle build issues (Critical for Xcode 15+)
+        script: |
+          # CRITICAL FIX: Privacy bundle build failures
+          # Affects: url_launcher_ios, sqflite_darwin, and other plugins with privacy manifests
+          
+          # Clean all corrupted build artifacts
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          
+          # Remove problematic privacy bundle references from Xcode project
+          cd ios
+          
+          # Use Ruby to remove privacy bundle file references from Runner.xcodeproj
+          ruby -e "
+          require 'xcodeproj'
+          project_path = 'Runner.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
+          
+          project.targets.each do |target|
+            next unless target.name == 'Runner'
+            
+            target.build_phases.each do |phase|
+              phase.files.to_a.each do |file|
+                if file.file_ref && file.file_ref.path && file.file_ref.path.include?('privacy.bundle')
+                  puts \"Removing: #{file.file_ref.path}\"
+                  phase.remove_file_reference(file.file_ref)
+                end
+              end
+            end
+          end
+          
+          project.save
+          puts 'Privacy bundle references removed successfully'
+          " || echo "Ruby script failed, continuing..."
+          
+          cd ..
+          
+      - name: Build iOS (DEBUG MODE with privacy bundle fix)
+        script: |
+          # Build in debug mode after removing privacy bundle references
+          flutter build ipa --debug \
+            --export-options-plist /Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+    publishing:
+      email:
+        recipients:
+          - ameenmamwn7@gmail.com
+        notify:
+          success: true
+          failure: true
+
+  ios-workflow:
+    scripts:
+      - name: Set up code signing settings
+        script: |
+          xcode-project use-profiles
+          
+      - name: Fix Swift issues
+        script: |
+          # Clean build folder
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ios/Pods
+          rm -f ios/Podfile.lock
+          
+          # Set Swift version
+          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
+          
+      - name: Install pods
+        script: |
+          cd ios
+          pod cache clean --all
+          pod deintegrate || true
+          pod install --repo-update
+          cd ..
+      
+      - name: Fix privacy bundle build issues (Critical for Xcode 15+)
+        script: |
+          # CRITICAL FIX: Privacy bundle build failures
+          # Affects: url_launcher_ios, sqflite_darwin, and other plugins with privacy manifests
+          
+          # Clean all corrupted build artifacts
+          rm -rf ~/Library/Developer/Xcode/DerivedData/*
+          
+          # Remove problematic privacy bundle references from Xcode project
+          cd ios
+          
+          # Use Ruby to remove privacy bundle file references from Runner.xcodeproj
+          ruby -e "
+          require 'xcodeproj'
+          project_path = 'Runner.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
+          
+          project.targets.each do |target|
+            next unless target.name == 'Runner'
+            
+            target.build_phases.each do |phase|
+              phase.files.to_a.each do |file|
+                if file.file_ref && file.file_ref.path && file.file_ref.path.include?('privacy.bundle')
+                  puts \"Removing: #{file.file_ref.path}\"
+                  phase.remove_file_reference(file.file_ref)
+                end
+              end
+            end
+          end
+          
+          project.save
+          puts 'Privacy bundle references removed successfully'
+          " || echo "Ruby script failed, continuing..."
+          
+          cd ..
+          
+      - name: Build iOS
+        script: |
+          # Build in debug mode after removing privacy bundle references
+          flutter build ipa --debug \
+            --export-options-plist /Users/builder/export_options.plist
