@@ -26,6 +26,13 @@ class TimezoneHelper {
   static Future<String> getDeviceTimezone() async {
     if (_cachedTimezone != null) return _cachedTimezone!;
 
+    if (const bool.fromEnvironment('FLUTTER_TEST')) {
+      final offset = DateTime.now().timeZoneOffset;
+      _cachedOffset = offset.inMinutes;
+      _cachedTimezone = 'UTC${_formatOffset(offset)}';
+      return _cachedTimezone!;
+    }
+
     try {
       // الحصول على timezone ID (مثل: Asia/Riyadh)
       final timezoneInfo = await FlutterTimezone.getLocalTimezone();

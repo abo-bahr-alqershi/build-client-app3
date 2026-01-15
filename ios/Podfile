@@ -121,6 +121,24 @@ post_install do |installer|
     config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
   end
   
+  support_files_dir = File.join(__dir__, 'Pods', 'Target Support Files')
+  if Dir.exist?(support_files_dir)
+    Dir.glob(File.join(support_files_dir, '**', '*.xcfilelist')).each do |file|
+      begin
+        original = File.read(file)
+        filtered = original.lines.reject do |line|
+          line.include?('PrivacyInfo.xcprivacy') ||
+            line.match?(/privacy\.bundle/i) ||
+            line.match?(/_privacy/i)
+        end.join
+        if filtered != original
+          File.write(file, filtered)
+        end
+      rescue StandardError
+      end
+    end
+  end
+  
   # Save changes
   installer.pods_project.save
 end
