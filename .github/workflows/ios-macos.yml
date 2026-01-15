@@ -75,7 +75,6 @@ jobs:
       - name: Setup iOS code signing (keychain + provisioning profile)
         if: ${{ github.event_name != 'pull_request' }}
         env:
-          IOS_P12_BASE64: ${{ secrets.IOS_P12_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
         run: |
@@ -86,12 +85,6 @@ jobs:
           KEYCHAIN_PASSWORD_CLEAN="$(printf %s "$KEYCHAIN_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           
           # التحقق من وجود Secrets
-          if [ -z "${IOS_P12_BASE64:-}" ]; then
-            echo "❌ Missing secret: IOS_P12_BASE64"
-            echo "Please add your p12 file as base64 to GitHub Secrets"
-            echo "Run: base64 -i cer_ios/ios_development.p12 | pbcopy"
-            exit 1
-          fi
           if [ -z "${IOS_P12_PASSWORD_CLEAN:-}" ]; then
             echo "❌ Missing or empty secret: IOS_P12_PASSWORD"
             exit 1
@@ -101,43 +94,50 @@ jobs:
             exit 1
           fi
           
-          # فك تشفير ملف p12 من base64
-          CERT_P12="$RUNNER_TEMP/cert.p12"
-          echo "$IOS_P12_BASE64" | base64 --decode > "$CERT_P12"
+          # استخدام الملف من الريبو مباشرة
+          CERT_P12="cer_ios/ios_development.p12"
+          PROFILE="cer_ios/Provision_Profile_2.mobileprovision"
           
-          echo "✅ Decoded p12 certificate from base64"
-          ls -lh "$CERT_P12"
-          
-          # التحقق من صحة الملف
-          if ! file "$CERT_P12" | grep -q "data"; then
-            echo "❌ Decoded file is not valid binary data"
-            file "$CERT_P12"
+          if [ ! -f "$CERT_P12" ]; then
+            echo "❌ Missing certificate file: $CERT_P12"
+            exit 1
+          fi
+          if [ ! -f "$PROFILE" ]; then
+            echo "❌ Missing provisioning profile: $PROFILE"
             exit 1
           fi
           
+          echo "--- Certificate file info ---"
+          ls -lh "$CERT_P12"
+          file "$CERT_P12"
+          shasum -a 256 "$CERT_P12"
+          
           # اختبار كلمة المرور مع OpenSSL أولاً
+          echo ""
           echo "--- Testing password with OpenSSL ---"
           if openssl pkcs12 -in "$CERT_P12" -noout -info -passin pass:"$IOS_P12_PASSWORD_CLEAN" 2>&1 | head -10; then
-            echo "✅ OpenSSL: Password is correct"
+            echo "✅ OpenSSL: Password verified successfully"
           else
             echo "❌ OpenSSL: Password verification failed"
-            echo "This indicates the password in IOS_P12_PASSWORD secret is incorrect"
             exit 1
           fi
           
           # إنشاء keychain
+          echo ""
+          echo "--- Creating keychain ---"
           security create-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           security list-keychains -d user -s build.keychain
+          echo "✅ Keychain created and configured"
           
-          # طريقة محسّنة لاستيراد الشهادة (حل مشكلة security import مع كلمات المرور)
-          # استخدام OpenSSL لاستخراج الشهادة والمفتاح ثم إعادة استيرادهم
-          echo "--- Extracting certificate and private key ---"
+          # الحل الجذري: استخدام OpenSSL لإعادة تصدير الشهادة بطريقة متوافقة
+          echo ""
+          echo "--- Re-exporting certificate for macOS security compatibility ---"
           
           CERT_PEM="$RUNNER_TEMP/cert.pem"
           KEY_PEM="$RUNNER_TEMP/key.pem"
-          NEW_P12="$RUNNER_TEMP/cert_reimported.p12"
+          NEW_P12="$RUNNER_TEMP/cert_compatible.p12"
           
           # استخراج الشهادة
           openssl pkcs12 -in "$CERT_P12" -clcerts -nokeys -out "$CERT_PEM" \
@@ -145,36 +145,35 @@ jobs:
           
           # استخراج المفتاح الخاص
           openssl pkcs12 -in "$CERT_P12" -nocerts -out "$KEY_PEM" \
-            -passin pass:"$IOS_P12_PASSWORD_CLEAN" -passout pass:tempkey123
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN" -passout pass:temp123
           
-          # إعادة تصدير p12 بدون كلمة مرور (أكثر توافقاً مع security)
+          # إعادة تصدير بدون كلمة مرور (يحل مشكلة PBES2/AES-256-CBC مع security)
           openssl pkcs12 -export -out "$NEW_P12" \
             -inkey "$KEY_PEM" -in "$CERT_PEM" \
-            -passin pass:tempkey123 -passout pass:
+            -passin pass:temp123 -passout pass:
           
-          echo "✅ Re-exported certificate without password for compatibility"
+          echo "✅ Certificate re-exported without password"
           
-          # استيراد الشهادة المُعاد تصديرها
+          # استيراد للـ keychain
+          echo ""
+          echo "--- Importing to keychain ---"
           if security import "$NEW_P12" -k build.keychain -P "" -A; then
-            echo "✅ Successfully imported certificate to keychain"
+            echo "✅ Certificate imported successfully"
           else
-            echo "❌ Failed to import certificate"
+            echo "❌ Import failed"
             exit 1
           fi
           
-          # إعداد keychain للاستخدام
+          # إعداد الوصول
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           
+          echo ""
           echo "--- Code signing identities ---"
           security find-identity -v -p codesigning build.keychain
           
           # معالجة provisioning profile
-          PROFILE="cer_ios/Provision_Profile_2.mobileprovision"
-          if [ ! -f "$PROFILE" ]; then
-            echo "❌ Missing provisioning profile: $PROFILE"
-            exit 1
-          fi
-          
+          echo ""
+          echo "--- Installing provisioning profile ---"
           PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
           security cms -D -i "$PROFILE" > "$PROFILE_PLIST"
           PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST")
@@ -182,13 +181,16 @@ jobs:
           TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
           
           echo "Profile Name: $PROFILE_NAME"
+          echo "Profile UUID: $PROFILE_UUID"
           echo "Team ID: $TEAM_ID"
+          
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
           echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
           
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
           
+          echo ""
           echo "✅ iOS code signing setup completed successfully"
 
       - name: Build IPA (Release)
