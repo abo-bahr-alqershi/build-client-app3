@@ -98,7 +98,16 @@ jobs:
           security set-keychain-settings -lut 21600 build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
 
-          security import "$CERT_P12" -k build.keychain -P "$IOS_P12_PASSWORD" -A
+          echo "--- Certificate file hash (diagnostic) ---"
+          shasum -a 256 "$CERT_P12" || true
+
+          if security import "$CERT_P12" -k build.keychain -P "$IOS_P12_PASSWORD" -A; then
+            echo "✅ Imported .p12 with provided password"
+          else
+            echo "⚠️ Import with provided password failed; trying empty password"
+            security import "$CERT_P12" -k build.keychain -P "" -A
+            echo "✅ Imported .p12 with empty password"
+          fi
           security list-keychains -d user -s build.keychain
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
 
