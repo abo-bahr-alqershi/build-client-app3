@@ -74,8 +74,8 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          CERT_P12="ملفات الشهايد لل ios/ios_development (1).p12"
-          PROFILE="ملفات الشهايد لل ios/Provision_Profile_2.mobileprovision"
+          CERT_P12="cer_ios/ios_development.p12"
+          PROFILE="cer_ios/Provision_Profile_2.mobileprovision"
 
           if [ -z "${IOS_P12_PASSWORD:-}" ]; then
             echo "Missing secret: IOS_P12_PASSWORD"
