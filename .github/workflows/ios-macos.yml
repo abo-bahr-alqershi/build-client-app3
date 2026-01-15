@@ -197,8 +197,24 @@ jobs:
           TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
           
           # اكتشاف نوع provisioning profile تلقائياً
+          echo "--- Detecting provisioning profile type ---"
+          
+          HAS_DEVICES="false"
+          GET_TASK_ALLOW="unknown"
+          
           if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" &>/dev/null; then
-            if /usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null | grep -q true; then
+            HAS_DEVICES="true"
+            DEVICE_COUNT=$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" 2>/dev/null | grep -c "Dict" || echo "0")
+            echo "ProvisionedDevices: YES (count: $DEVICE_COUNT)"
+          else
+            echo "ProvisionedDevices: NO (App Store profile)"
+          fi
+          
+          GET_TASK_ALLOW_VALUE=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null || echo "not_found")
+          echo "get-task-allow: $GET_TASK_ALLOW_VALUE"
+          
+          if [ "$HAS_DEVICES" = "true" ]; then
+            if [ "$GET_TASK_ALLOW_VALUE" = "true" ]; then
               EXPORT_METHOD="development"
               echo "✅ Detected: Development provisioning profile"
             else
@@ -289,31 +305,35 @@ jobs:
           echo ""
 
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
-          cat > "$EXPORT_OPTIONS_PLIST" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>${EXPORT_METHOD}</string>
-            <key>teamID</key>
-            <string>${TEAM_ID}</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>${BUNDLE_ID}</key>
-              <string>${PROFILE_UUID}</string>
-            </dict>
-            <key>compileBitcode</key>
-            <false/>
-            <key>uploadSymbols</key>
-            <false/>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>signingCertificate</key>
-            <string>Apple Development</string>
-          </dict>
-          </plist>
-          EOF
+          
+          # Xcode 16.4 workaround: استخدام أبسط format ممكن
+          cat > "$EXPORT_OPTIONS_PLIST" << 'PLIST_END'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>teamID</key>
+	<string>TEAM_ID_PLACEHOLDER</string>
+	<key>method</key>
+	<string>METHOD_PLACEHOLDER</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>BUNDLE_ID_PLACEHOLDER</key>
+		<string>PROFILE_UUID_PLACEHOLDER</string>
+	</dict>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>compileBitcode</key>
+	<false/>
+</dict>
+</plist>
+PLIST_END
+          
+          # استبدال القيم (macOS sed compatible)
+          sed -i '' "s|TEAM_ID_PLACEHOLDER|${TEAM_ID}|g" "$EXPORT_OPTIONS_PLIST"
+          sed -i '' "s|METHOD_PLACEHOLDER|${EXPORT_METHOD}|g" "$EXPORT_OPTIONS_PLIST"
+          sed -i '' "s|BUNDLE_ID_PLACEHOLDER|${BUNDLE_ID}|g" "$EXPORT_OPTIONS_PLIST"
+          sed -i '' "s|PROFILE_UUID_PLACEHOLDER|${PROFILE_UUID}|g" "$EXPORT_OPTIONS_PLIST"
           
           echo ""
           echo "--- ExportOptions.plist ---"
@@ -344,6 +364,17 @@ jobs:
             echo ""
             echo "Runner.app Info.plist:"
             plutil -p "build/Runner.xcarchive/Products/Applications/Runner.app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleVersion|CFBundleShortVersionString" || true
+            echo ""
+            echo "Runner.app codesign info:"
+            codesign -dv "build/Runner.xcarchive/Products/Applications/Runner.app" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier" || true
+          fi
+          
+          # التحقق من certificates في profile
+          echo ""
+          echo "Certificates in provisioning profile:"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          if [ -f "$PROFILE_PLIST" ]; then
+            /usr/libexec/PlistBuddy -c 'Print :DeveloperCertificates:0' "$PROFILE_PLIST" 2>/dev/null | openssl x509 -inform DER -noout -subject 2>/dev/null | sed 's/subject=//' || echo "Could not extract certificate"
           fi
           
           echo ""
@@ -352,14 +383,17 @@ jobs:
           # التأكد من أن keychain هو default
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           echo "✅ Keychain unlocked and set as default"
           
+          # المحاولة الأولى: بدون -verbose (Xcode 16.4 bug workaround)
           set +e
           xcodebuild -exportArchive \
             -archivePath build/Runner.xcarchive \
             -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
             -exportPath build/ipa \
-            -verbose 2>&1 | tee /tmp/export.log
+            -allowProvisioningUpdates \
+            2>&1 | tee /tmp/export.log
           EXPORT_EXIT_CODE=$?
           set -e
           
@@ -368,26 +402,57 @@ jobs:
           else
             echo "❌ Export failed with exit code: $EXPORT_EXIT_CODE"
             echo ""
-            echo "--- Last 50 lines of export log ---"
-            tail -50 /tmp/export.log
-            echo ""
-            echo "--- ExportOptions.plist content ---"
-            cat "$EXPORT_OPTIONS_PLIST"
-            echo ""
-            echo "--- Archive Info.plist ---"
-            if [ -f "build/Runner.xcarchive/Info.plist" ]; then
-              plutil -p "build/Runner.xcarchive/Info.plist" | head -30
+            
+            # التحقق من الخطأ المحدد
+            if grep -q "expected one {} but found" /tmp/export.log; then
+              echo "🔧 Detected Xcode 16.4 'expected one {}' bug - trying workaround with ad-hoc method"
+              
+              # إعادة إنشاء ExportOptions.plist مع ad-hoc
+              sed -i '' "s|<string>${EXPORT_METHOD}</string>|<string>ad-hoc</string>|g" "$EXPORT_OPTIONS_PLIST"
+              
+              echo "--- Retrying with ad-hoc method ---"
+              cat "$EXPORT_OPTIONS_PLIST"
+              echo ""
+              
+              set +e
+              xcodebuild -exportArchive \
+                -archivePath build/Runner.xcarchive \
+                -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
+                -exportPath build/ipa \
+                -allowProvisioningUpdates \
+                2>&1 | tee /tmp/export2.log
+              EXPORT_EXIT_CODE=$?
+              set -e
+              
+              if [ $EXPORT_EXIT_CODE -eq 0 ]; then
+                echo "✅ Export succeeded with ad-hoc method"
+              else
+                echo "❌ Export still failed with ad-hoc method"
+                tail -50 /tmp/export2.log
+                exit 1
+              fi
+            else
+              echo "--- Last 50 lines of export log ---"
+              tail -50 /tmp/export.log
+              echo ""
+              echo "--- ExportOptions.plist content ---"
+              cat "$EXPORT_OPTIONS_PLIST"
+              echo ""
+              echo "--- Archive Info.plist ---"
+              if [ -f "build/Runner.xcarchive/Info.plist" ]; then
+                plutil -p "build/Runner.xcarchive/Info.plist" | head -30
+              fi
+              echo ""
+              echo "--- Signing identities ---"
+              security find-identity -v -p codesigning
+              echo ""
+              echo "--- Provisioning Profiles ---"
+              ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+              echo ""
+              echo "--- Searching for error in log ---"
+              grep -i "error\|fail\|invalid\|denied" /tmp/export.log | tail -20 || echo "No error keywords found"
+              exit 1
             fi
-            echo ""
-            echo "--- Signing identities ---"
-            security find-identity -v -p codesigning
-            echo ""
-            echo "--- Provisioning Profiles ---"
-            ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
-            echo ""
-            echo "--- Searching for error in log ---"
-            grep -i "error\|fail\|invalid\|denied" /tmp/export.log | tail -20 || echo "No error keywords found"
-            exit 1
           fi
 
           ls -la build/ipa
