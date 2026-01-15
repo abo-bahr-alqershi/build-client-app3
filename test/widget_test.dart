@@ -7,13 +7,24 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:hggzk/app.dart';
+import 'package:hggzk/core/bloc/app_bloc.dart';
+import 'package:hggzk/injection_container.dart' as di;
 
 void main() {
+  setUpAll(() async {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    await di.init();
+    AppBloc.initialize();
+  });
+
   testWidgets('App loads correctly', (WidgetTester tester) async {
     // Build our app and trigger a frame.
     await tester.pumpWidget(const HggzkApp());
+    await tester.pump();
 
     // Verify that app loads
     expect(find.byType(MaterialApp), findsOneWidget);
