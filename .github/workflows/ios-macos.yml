@@ -196,12 +196,28 @@ jobs:
           PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")
           TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
           
+          # اكتشاف نوع provisioning profile تلقائياً
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" &>/dev/null; then
+            if /usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null | grep -q true; then
+              EXPORT_METHOD="development"
+              echo "✅ Detected: Development provisioning profile"
+            else
+              EXPORT_METHOD="ad-hoc"
+              echo "✅ Detected: Ad-Hoc provisioning profile"
+            fi
+          else
+            EXPORT_METHOD="app-store"
+            echo "✅ Detected: App Store provisioning profile"
+          fi
+          
           echo "Profile Name: $PROFILE_NAME"
           echo "Profile UUID: $PROFILE_UUID"
           echo "Team ID: $TEAM_ID"
+          echo "Export Method: $EXPORT_METHOD"
           
           echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
           echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "EXPORT_METHOD=$EXPORT_METHOD" >> "$GITHUB_ENV"
           
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
@@ -215,6 +231,27 @@ jobs:
           BUNDLE_ID: com.hggzk.app
         run: |
           set -euo pipefail
+          
+          # التحقق من وجود المتغيرات المطلوبة
+          echo "--- Build Configuration ---"
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Team ID: ${TEAM_ID:-NOT_SET}"
+          echo "Profile Name: ${PROFILE_NAME:-NOT_SET}"
+          echo "Export Method: ${EXPORT_METHOD:-NOT_SET}"
+          
+          if [ -z "${EXPORT_METHOD:-}" ]; then
+            echo "❌ EXPORT_METHOD not set, defaulting to development"
+            EXPORT_METHOD="development"
+          fi
+          if [ -z "${TEAM_ID:-}" ]; then
+            echo "❌ TEAM_ID not set"
+            exit 1
+          fi
+          if [ -z "${PROFILE_NAME:-}" ]; then
+            echo "❌ PROFILE_NAME not set"
+            exit 1
+          fi
+          echo ""
 
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           cat > "$EXPORT_OPTIONS_PLIST" <<EOF
@@ -223,7 +260,7 @@ jobs:
           <plist version="1.0">
           <dict>
             <key>method</key>
-            <string>development</string>
+            <string>${EXPORT_METHOD}</string>
             <key>signingStyle</key>
             <string>manual</string>
             <key>teamID</key>
@@ -233,9 +270,18 @@ jobs:
               <key>${BUNDLE_ID}</key>
               <string>${PROFILE_NAME}</string>
             </dict>
+            <key>compileBitcode</key>
+            <false/>
+            <key>uploadSymbols</key>
+            <false/>
           </dict>
           </plist>
           EOF
+          
+          echo ""
+          echo "--- ExportOptions.plist ---"
+          cat "$EXPORT_OPTIONS_PLIST"
+          echo ""
 
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
