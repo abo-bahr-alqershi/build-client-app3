@@ -1,322 +1,475 @@
-# Codemagic iOS Build Configuration - Fixed for Xcode 16.4 Bug
-workflows:
-  ios-debug-build:
-    name: iOS Debug Build
-    max_build_duration: 120
-    instance_type: mac_mini_m2
-    
-    environment:
-      ios_signing:
-        distribution_type: development
-        bundle_identifier: com.hggzk.app
-      flutter: stable
-      xcode: 15.0  # تغيير إلى Xcode 15 لتجنب bug الموجود في 16.4
-      cocoapods: default
-      
-      vars:
-        # Environment variables
-        LANG: en_US.UTF-8
-        LANGUAGE: en_US.UTF-8
-        LC_ALL: en_US.UTF-8
-        COCOAPODS_DISABLE_STATS: "true"
-    
-    triggering:
-      events:
-        - push
-        - pull_request
-      branch_patterns:
-        - pattern: '*'
-          include: true
-    
-    scripts:
-      # === STEP 1: Environment Setup ===
-      - name: Show environment info
-        script: |
-          echo "========================================="
-          echo "📊 ENVIRONMENT INFORMATION"
-          echo "========================================="
-          flutter --version
+name: iOS (macOS)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Enable SSH debug session (tmate). Only works for workflow_dispatch.'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  ios-build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      COCOAPODS_DISABLE_STATS: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: SSH debug (tmate)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install CocoaPods
+        run: |
+          if ! command -v pod >/dev/null; then
+            sudo gem install cocoapods
+          fi
           pod --version
-          xcodebuild -version
-          ruby --version
-          echo "========================================="
-          
-      # === STEP 2: Configure code signing ===
-      - name: Configure code signing
-        script: |
-          echo "🔐 Configuring code signing..."
-          xcode-project use-profiles
-          
-      # === STEP 3: Clean everything ===
-      - name: Deep clean
-        script: |
-          echo "🧹 Deep cleaning build environment..."
-          
-          # Clean Xcode derived data
-          rm -rf ~/Library/Developer/Xcode/DerivedData
-          
-          # Clean iOS build artifacts
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile', 'pubspec.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Flutter clean
+        run: flutter clean
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      # - name: Run tests
+      #   run: flutter test
+
+      - name: Pod install
+        run: |
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks
           cd ios
-          rm -rf build
-          rm -rf Pods
-          rm -f Podfile.lock
-          rm -rf .symlinks
-          pod cache clean --all --verbose || true
-          cd ..
+          pod install --repo-update
+
+      - name: Build iOS (PR - no codesign)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: flutter build ios --release --no-codesign
+
+      - name: Setup iOS code signing (keychain + provisioning profile)
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
           
-          # Clean Flutter artifacts
-          flutter clean
-          rm -rf .dart_tool
-          rm -rf build
+          # تنظيف كلمات المرور من أي مسافات أو أحرف خفية
+          IOS_P12_PASSWORD_CLEAN="$(printf %s "$IOS_P12_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          KEYCHAIN_PASSWORD_CLEAN="$(printf %s "$KEYCHAIN_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           
-          echo "✅ Cleaning completed"
-          
-      # === STEP 4: Get Flutter dependencies ===
-      - name: Get Flutter dependencies
-        script: |
-          echo "📦 Getting Flutter dependencies..."
-          flutter pub get
-          
-      # === STEP 5: Fix iOS configuration ===
-      - name: Configure iOS settings
-        script: |
-          echo "⚙️ Configuring iOS settings..."
-          
-          # Add Swift settings to Generated.xcconfig
-          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
-          echo "SWIFT_COMPILATION_MODE = singlefile" >> ios/Flutter/Generated.xcconfig
-          echo "SWIFT_OPTIMIZATION_LEVEL = -Onone" >> ios/Flutter/Generated.xcconfig
-          echo "ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES" >> ios/Flutter/Generated.xcconfig
-          
-          echo "✅ iOS configuration updated"
-          
-      # === STEP 6: Update CocoaPods ===
-      - name: Update CocoaPods repos
-        script: |
-          echo "🔄 Updating CocoaPods repositories..."
-          pod repo update --verbose
-          
-      # === STEP 7: Install iOS dependencies ===
-      - name: Install iOS dependencies
-        script: |
-          echo "📱 Installing iOS dependencies..."
-          cd ios
-          
-          # Ensure Podfile exists
-          if [ ! -f "Podfile" ]; then
-            echo "❌ ERROR: Podfile not found!"
+          # التحقق من وجود Secrets
+          if [ -z "${IOS_P12_PASSWORD_CLEAN:-}" ]; then
+            echo "❌ Missing or empty secret: IOS_P12_PASSWORD"
+            exit 1
+          fi
+          if [ -z "${KEYCHAIN_PASSWORD_CLEAN:-}" ]; then
+            echo "❌ Missing or empty secret: IOS_KEYCHAIN_PASSWORD"
             exit 1
           fi
           
-          # Install pods
-          pod install --repo-update --verbose
+          # استخدام الملف من الريبو مباشرة
+          CERT_P12="cer_ios/ios_development.p12"
+          PROFILE="cer_ios/Provision_Profile_2.mobileprovision"
           
-          # Show installed pods
-          echo "📋 Installed pods:"
-          pod list --verbose || true
-          
-          cd ..
-          echo "✅ iOS dependencies installed"
-          
-      # === STEP 8: Fix privacy bundle issues ===
-      - name: Fix privacy bundle issues
-        script: |
-          echo "🔧 Fixing privacy bundle issues..."
-          
-          cd ios
-          
-          # Function to clean privacy bundles from a project file
-          clean_project_file() {
-            local file="$1"
-            if [ -f "$file" ]; then
-              echo "Cleaning: $file"
-              
-              # Backup original
-              cp "$file" "${file}.backup"
-              
-              # Remove privacy bundle references
-              sed -i '' '/_privacy\.bundle/d' "$file"
-              sed -i '' '/PrivacyInfo\.xcprivacy/d' "$file"
-              sed -i '' '/privacy_bundle/d' "$file"
-              
-              # Count remaining references
-              local count=$(grep -c "privacy" "$file" || echo "0")
-              echo "  Remaining privacy references: $count"
-            fi
-          }
-          
-          # Clean Runner project
-          clean_project_file "Runner.xcodeproj/project.pbxproj"
-          
-          # Clean Pods project if exists
-          if [ -f "Pods/Pods.xcodeproj/project.pbxproj" ]; then
-            clean_project_file "Pods/Pods.xcodeproj/project.pbxproj"
+          if [ ! -f "$CERT_P12" ]; then
+            echo "❌ Missing certificate file: $CERT_P12"
+            exit 1
           fi
-          
-          # Remove physical privacy bundle directories
-          find . -name "*privacy.bundle" -type d -exec rm -rf {} + 2>/dev/null || true
-          find . -name "PrivacyInfo.xcprivacy" -type f -delete 2>/dev/null || true
-          
-          cd ..
-          echo "✅ Privacy bundle issues fixed"
-          
-      # === STEP 9: Verify project integrity ===
-      - name: Verify project configuration
-        script: |
-          echo "🔍 Verifying project configuration..."
-          
-          cd ios
-          
-          # Check if workspace exists
-          if [ ! -d "Runner.xcworkspace" ]; then
-            echo "❌ ERROR: Runner.xcworkspace not found!"
+          if [ ! -f "$PROFILE" ]; then
+            echo "❌ Missing provisioning profile: $PROFILE"
             exit 1
           fi
           
-          # Show build settings
-          xcodebuild -workspace Runner.xcworkspace \
-                     -scheme Runner \
-                     -configuration Debug \
-                     -sdk iphoneos \
-                     -showBuildSettings | grep -E "SWIFT_VERSION|DEPLOYMENT_TARGET|PRODUCT_BUNDLE_IDENTIFIER" || true
+          echo "--- Certificate file info ---"
+          ls -lh "$CERT_P12"
+          file "$CERT_P12"
+          shasum -a 256 "$CERT_P12"
           
-          cd ..
-          echo "✅ Project verification completed"
-          
-      # === STEP 10: Build and Export IPA (Workaround for Xcode 16.4 bug) ===
-      - name: Build iOS Debug IPA with Workaround
-        script: |
-          echo "========================================="
-          echo "🏗️  BUILDING iOS DEBUG IPA"
-          echo "========================================="
-          
-          cd ios
-          
-          # Method 1: Build archive without export options
-          echo "📦 Building archive..."
-          xcodebuild -workspace Runner.xcworkspace \
-                     -scheme Runner \
-                     -configuration Debug \
-                     -derivedDataPath build/DerivedData \
-                     -archivePath build/Runner.xcarchive \
-                     DEVELOPMENT_TEAM=KJ8CHSW8D4 \
-                     PRODUCT_BUNDLE_IDENTIFIER=com.hggzk.app \
-                     archive
-          
-          # Method 2: Export without exportOptionsPlist (use defaults)
-          echo "📱 Exporting IPA without export options..."
-          xcodebuild -exportArchive \
-                     -archivePath build/Runner.xcarchive \
-                     -exportPath build/ipa \
-                     DEVELOPMENT_TEAM=KJ8CHSW8D4 \
-                     -allowProvisioningUpdates \
-                     CODE_SIGN_STYLE=Automatic || {
-              
-              echo "⚠️ Export without options failed, trying manual signing..."
-              
-              # Method 3: Create IPA manually from .app
-              echo "📦 Creating IPA manually..."
-              
-              # Create Payload directory
-              mkdir -p build/ipa/Payload
-              
-              # Copy .app to Payload
-              cp -r build/Runner.xcarchive/Products/Applications/Runner.app build/ipa/Payload/
-              
-              # Create IPA
-              cd build/ipa
-              zip -r Runner.ipa Payload
-              rm -rf Payload
-              cd ../..
-              
-              echo "✅ IPA created manually"
-          }
-          
-          cd ..
-          
-          # Verify IPA exists
-          if [ -f "ios/build/ipa/Runner.ipa" ]; then
-              echo "✅ IPA created successfully"
-              ls -la ios/build/ipa/
+          # اختبار كلمة المرور مع OpenSSL أولاً
+          echo ""
+          echo "--- Testing password with OpenSSL ---"
+          if openssl pkcs12 -in "$CERT_P12" -noout -info -passin pass:"$IOS_P12_PASSWORD_CLEAN" 2>&1 | head -10; then
+            echo "✅ OpenSSL: Password verified successfully"
           else
-              echo "⚠️ IPA not found, checking alternative locations..."
-              find . -name "*.ipa" -type f
+            echo "❌ OpenSSL: Password verification failed"
+            exit 1
           fi
           
-          echo "========================================="
-          echo "✅ BUILD PROCESS COMPLETED"
-          echo "========================================="
+          # إنشاء keychain
+          echo ""
+          echo "--- Creating keychain ---"
+          security create-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          security list-keychains -d user -s build.keychain
+          echo "✅ Keychain created and configured"
           
-      # === STEP 11: Alternative Flutter Build (if above fails) ===
-      - name: Alternative Flutter Build Method
-        script: |
-          # Check if IPA was created
-          if [ ! -f "ios/build/ipa/Runner.ipa" ] && [ ! -f "build/ios/ipa/Runner.ipa" ]; then
-              echo "🔄 Trying Flutter build without export options..."
+          # الحل الجذري: استيراد الشهادة والمفتاح بشكل منفصل (PEM format)
+          # هذا يتجنب مشاكل PKCS#12 مع security على macOS تماماً
+          echo ""
+          echo "--- Extracting certificate and private key (PEM format) ---"
+          
+          CERT_PEM="$RUNNER_TEMP/cert.pem"
+          KEY_PEM="$RUNNER_TEMP/key.pem"
+          CA_CERTS="$RUNNER_TEMP/ca.pem"
+          
+          # استخراج الشهادة
+          openssl pkcs12 -in "$CERT_P12" -clcerts -nokeys -out "$CERT_PEM" \
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN"
+          
+          # استخراج المفتاح الخاص (بدون تشفير باستخدام -nodes)
+          openssl pkcs12 -in "$CERT_P12" -nocerts -nodes -out "$KEY_PEM" \
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN"
+          
+          # استخراج CA certificates (إن وُجدت)
+          openssl pkcs12 -in "$CERT_P12" -cacerts -nokeys -out "$CA_CERTS" \
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN" 2>/dev/null || true
+          
+          echo "✅ Extracted certificate and key to PEM format"
+          ls -lh "$CERT_PEM" "$KEY_PEM"
+          
+          # استيراد الشهادة للـ keychain
+          echo ""
+          echo "--- Importing certificate to keychain ---"
+          if security import "$CERT_PEM" -k build.keychain -T /usr/bin/codesign -T /usr/bin/security; then
+            echo "✅ Certificate imported"
+          else
+            echo "❌ Certificate import failed"
+            exit 1
+          fi
+          
+          # استيراد المفتاح الخاص للـ keychain
+          echo "--- Importing private key to keychain ---"
+          if security import "$KEY_PEM" -k build.keychain -T /usr/bin/codesign -T /usr/bin/security -A; then
+            echo "✅ Private key imported"
+          else
+            echo "❌ Private key import failed"
+            exit 1
+          fi
+          
+          # استيراد CA certificates إن وُجدت
+          if [ -s "$CA_CERTS" ]; then
+            echo "--- Importing CA certificates ---"
+            security import "$CA_CERTS" -k build.keychain -T /usr/bin/codesign -T /usr/bin/security 2>/dev/null || echo "⚠️  CA import skipped"
+          fi
+          
+          # إعداد الوصول
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          
+          echo ""
+          echo "--- Code signing identities ---"
+          security find-identity -v -p codesigning build.keychain
+          
+          # معالجة provisioning profile
+          echo ""
+          echo "--- Installing provisioning profile ---"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          security cms -D -i "$PROFILE" > "$PROFILE_PLIST"
+          PROFILE_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$PROFILE_PLIST")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c 'Print :Name' "$PROFILE_PLIST")
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
+          
+          # اكتشاف نوع provisioning profile تلقائياً
+          echo "--- Detecting provisioning profile type ---"
+          
+          HAS_DEVICES="false"
+          GET_TASK_ALLOW="unknown"
+          
+          if /usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" &>/dev/null; then
+            HAS_DEVICES="true"
+            DEVICE_COUNT=$(/usr/libexec/PlistBuddy -c 'Print :ProvisionedDevices' "$PROFILE_PLIST" 2>/dev/null | grep -c "Dict" || echo "0")
+            echo "ProvisionedDevices: YES (count: $DEVICE_COUNT)"
+          else
+            echo "ProvisionedDevices: NO (App Store profile)"
+          fi
+          
+          GET_TASK_ALLOW_VALUE=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null || echo "not_found")
+          echo "get-task-allow: $GET_TASK_ALLOW_VALUE"
+          
+          if [ "$HAS_DEVICES" = "true" ]; then
+            if [ "$GET_TASK_ALLOW_VALUE" = "true" ]; then
+              EXPORT_METHOD="development"
+              echo "✅ Detected: Development provisioning profile"
+            else
+              EXPORT_METHOD="ad-hoc"
+              echo "✅ Detected: Ad-Hoc provisioning profile"
+            fi
+          else
+            EXPORT_METHOD="app-store"
+            echo "✅ Detected: App Store provisioning profile"
+          fi
+          
+          echo "Profile Name: $PROFILE_NAME"
+          echo "Profile UUID: $PROFILE_UUID"
+          echo "Team ID: $TEAM_ID"
+          echo "Export Method: $EXPORT_METHOD"
+          
+          echo "PROFILE_NAME=$PROFILE_NAME" >> "$GITHUB_ENV"
+          echo "PROFILE_UUID=$PROFILE_UUID" >> "$GITHUB_ENV"
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "EXPORT_METHOD=$EXPORT_METHOD" >> "$GITHUB_ENV"
+          
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+          
+          echo ""
+          echo "✅ iOS code signing setup completed successfully"
+
+      - name: Build IPA (Release)
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          BUNDLE_ID: com.hggzk.app
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          
+          # تنظيف كلمة مرور keychain
+          KEYCHAIN_PASSWORD_CLEAN="$(printf %s "$KEYCHAIN_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          
+          # التحقق من وجود المتغيرات المطلوبة
+          echo "--- Build Configuration ---"
+          echo "Bundle ID (expected): $BUNDLE_ID"
+          echo "Team ID: ${TEAM_ID:-NOT_SET}"
+          echo "Profile Name: ${PROFILE_NAME:-NOT_SET}"
+          echo "Profile UUID: ${PROFILE_UUID:-NOT_SET}"
+          echo "Export Method: ${EXPORT_METHOD:-NOT_SET}"
+          
+          # التحقق من bundle ID في provisioning profile
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          if [ -f "$PROFILE_PLIST" ]; then
+            PROFILE_BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$PROFILE_PLIST" 2>/dev/null | sed "s/${TEAM_ID}\.//" || echo "NOT_FOUND")
+            echo "Bundle ID (in profile): $PROFILE_BUNDLE_ID"
+            
+            if [ "$PROFILE_BUNDLE_ID" != "$BUNDLE_ID" ] && [ "$PROFILE_BUNDLE_ID" != "*" ] && [ "$PROFILE_BUNDLE_ID" != "NOT_FOUND" ]; then
+              echo "⚠️  Warning: Bundle ID mismatch!"
+              echo "  Expected: $BUNDLE_ID"
+              echo "  Profile has: $PROFILE_BUNDLE_ID"
+            fi
+          fi
+          echo ""
+          
+          if [ -z "${EXPORT_METHOD:-}" ]; then
+            echo "❌ EXPORT_METHOD not set, defaulting to development"
+            EXPORT_METHOD="development"
+          fi
+          if [ -z "${TEAM_ID:-}" ]; then
+            echo "❌ TEAM_ID not set"
+            exit 1
+          fi
+          if [ -z "${PROFILE_UUID:-}" ]; then
+            echo "❌ PROFILE_UUID not set"
+            exit 1
+          fi
+          echo ""
+          
+          # استخراج signing identity من الـ keychain
+          echo "--- Available signing identities ---"
+          security find-identity -v -p codesigning build.keychain
+          echo ""
+          
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Apple Development" | head -1 | sed -E 's/.*"(.+)".*/\1/')
+          
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "❌ Failed to extract signing identity"
+            exit 1
+          fi
+          
+          echo "Extracted Signing Identity: '$SIGNING_IDENTITY'"
+          echo ""
+
+          EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          
+          # Xcode 16.4 CRITICAL FIX: استخدام PlistBuddy لإنشاء binary plist بدلاً من XML
+          # هذا يحل مشكلة "expected one {} but found X" في Xcode 16.4
+          
+          # إنشاء ملف plist فارغ
+          /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
+          
+          # إضافة القيم واحدة تلو الأخرى
+          /usr/libexec/PlistBuddy -c "Add :teamID string '${TEAM_ID}'" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :method string '${EXPORT_METHOD}'" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '${PROFILE_UUID}'" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string 'manual'" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool false" "$EXPORT_OPTIONS_PLIST"
+          
+          # تحويل لـ XML format للعرض فقط
+          plutil -convert xml1 "$EXPORT_OPTIONS_PLIST"
+          
+          echo ""
+          echo "--- ExportOptions.plist ---"
+          cat "$EXPORT_OPTIONS_PLIST"
+          echo ""
+
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Runner.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive
+
+          echo ""
+          echo "--- Archive created successfully ---"
+          
+          # التحقق من محتوى Archive
+          if [ -f "build/Runner.xcarchive/Info.plist" ]; then
+            echo "Archive Info.plist:"
+            plutil -p "build/Runner.xcarchive/Info.plist" | grep -E "ApplicationProperties|CFBundleIdentifier|SigningIdentity" || true
+          fi
+          
+          if [ -d "build/Runner.xcarchive/Products/Applications/Runner.app" ]; then
+            echo ""
+            echo "Runner.app Info.plist:"
+            plutil -p "build/Runner.xcarchive/Products/Applications/Runner.app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleVersion|CFBundleShortVersionString" || true
+            echo ""
+            echo "Runner.app codesign info:"
+            codesign -dv "build/Runner.xcarchive/Products/Applications/Runner.app" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier" || true
+          fi
+          
+          # التحقق من certificates في profile
+          echo ""
+          echo "Certificates in provisioning profile:"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          if [ -f "$PROFILE_PLIST" ]; then
+            /usr/libexec/PlistBuddy -c 'Print :DeveloperCertificates:0' "$PROFILE_PLIST" 2>/dev/null | openssl x509 -inform DER -noout -subject 2>/dev/null | sed 's/subject=//' || echo "Could not extract certificate"
+          fi
+          
+          echo ""
+          echo "--- Exporting IPA ---"
+          
+          # التأكد من أن keychain هو default
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          echo "✅ Keychain unlocked and set as default"
+          
+          # المحاولة الأولى: بدون -verbose (Xcode 16.4 bug workaround)
+          set +e
+          xcodebuild -exportArchive \
+            -archivePath build/Runner.xcarchive \
+            -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
+            -exportPath build/ipa \
+            -allowProvisioningUpdates \
+            2>&1 | tee /tmp/export.log
+          EXPORT_EXIT_CODE=$?
+          set -e
+          
+          if [ $EXPORT_EXIT_CODE -eq 0 ]; then
+            echo "✅ Export succeeded"
+          else
+            echo "❌ Export failed with exit code: $EXPORT_EXIT_CODE"
+            echo ""
+            
+            # التحقق من الخطأ المحدد
+            if grep -q "expected one {} but found" /tmp/export.log; then
+              echo "🔧 Detected Xcode 16.4 'expected one {}' bug"
+              echo "Trying workaround: Export without ExportOptions.plist (auto-detect)"
               
-              # Try Flutter build without specifying export options
-              flutter build ipa --debug --no-pub || {
-                  echo "⚠️ Flutter build failed, trying iOS build..."
-                  
-                  # Build iOS without creating IPA
-                  flutter build ios --debug --no-pub
-                  
-                  # Create IPA manually from build output
-                  cd build/ios/iphoneos
-                  mkdir -p Payload
-                  cp -r Runner.app Payload/
-                  zip -r Runner.ipa Payload
-                  rm -rf Payload
-                  cd ../../..
-                  
-                  echo "✅ IPA created from iOS build"
-              }
+              # المحاولة بدون ExportOptions.plist - دع Xcode يكتشف تلقائياً
+              set +e
+              xcodebuild -exportArchive \
+                -archivePath build/Runner.xcarchive \
+                -exportPath build/ipa \
+                -allowProvisioningUpdates \
+                2>&1 | tee /tmp/export2.log
+              EXPORT_EXIT_CODE=$?
+              set -e
+              
+              if [ $EXPORT_EXIT_CODE -eq 0 ]; then
+                echo "✅ Export succeeded with auto-detection"
+              else
+                echo "❌ Export still failed with auto-detection"
+                echo ""
+                echo "Trying final workaround: Binary plist with app-store method"
+                
+                # المحاولة الأخيرة: استخدام app-store بدلاً من development
+                rm -f "$EXPORT_OPTIONS_PLIST"
+                /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
+                /usr/libexec/PlistBuddy -c "Add :teamID string '${TEAM_ID}'" "$EXPORT_OPTIONS_PLIST"
+                /usr/libexec/PlistBuddy -c "Add :method string 'app-store'" "$EXPORT_OPTIONS_PLIST"
+                /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
+                /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '${PROFILE_UUID}'" "$EXPORT_OPTIONS_PLIST"
+                /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
+                
+                set +e
+                xcodebuild -exportArchive \
+                  -archivePath build/Runner.xcarchive \
+                  -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
+                  -exportPath build/ipa \
+                  -allowProvisioningUpdates \
+                  2>&1 | tee /tmp/export3.log
+                EXPORT_EXIT_CODE=$?
+                set -e
+                
+                if [ $EXPORT_EXIT_CODE -ne 0 ]; then
+                  echo "❌ All export attempts failed"
+                  tail -50 /tmp/export3.log
+                  exit 1
+                fi
+                
+                echo "✅ Export succeeded with app-store method"
+              fi
+            else
+              echo "--- Last 50 lines of export log ---"
+              tail -50 /tmp/export.log
+              echo ""
+              echo "--- ExportOptions.plist content ---"
+              cat "$EXPORT_OPTIONS_PLIST"
+              echo ""
+              echo "--- Archive Info.plist ---"
+              if [ -f "build/Runner.xcarchive/Info.plist" ]; then
+                plutil -p "build/Runner.xcarchive/Info.plist" | head -30
+              fi
+              echo ""
+              echo "--- Signing identities ---"
+              security find-identity -v -p codesigning
+              echo ""
+              echo "--- Provisioning Profiles ---"
+              ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
+              echo ""
+              echo "--- Searching for error in log ---"
+              grep -i "error\|fail\|invalid\|denied" /tmp/export.log | tail -20 || echo "No error keywords found"
+              exit 1
+            fi
           fi
-          
-      # === STEP 12: Collect all artifacts ===
-      - name: Collect and verify artifacts
-        script: |
-          echo "📦 Collecting all build artifacts..."
-          
-          # Create artifacts directory
-          mkdir -p artifacts
-          
-          # Find and copy all IPAs
-          find . -name "*.ipa" -type f | while read ipa; do
-              echo "Found IPA: $ipa"
-              cp "$ipa" artifacts/ || true
-          done
-          
-          # Find and copy archives
-          find . -name "*.xcarchive" -type d | while read archive; do
-              echo "Found archive: $archive"
-              cp -r "$archive" artifacts/ || true
-          done
-          
-          # List final artifacts
-          echo "========================================="
-          echo "📋 FINAL ARTIFACTS:"
-          echo "========================================="
-          ls -la artifacts/ || echo "No artifacts found"
-          
-          # Ensure at least one IPA exists
-          if [ ! -f "artifacts/*.ipa" ]; then
-              echo "⚠️ Warning: No IPA found in artifacts directory"
-              echo "Searching for any app bundle..."
-              find . -name "Runner.app" -type d
-          fi
-          
-    artifacts:
-      - artifacts/**
-      - ios/build/ipa/*.ipa
-      - ios/build/Runner.xcarchive
-      - build/ios/iphoneos/*.ipa
-      - build/ios/ipa/*.ipa
-      
-    publishing:
-      email:
-        recipients:
-          - ameenmamwn7@gmail.com
-        notify:
-          success: true
-          failure: true
+
+          ls -la build/ipa
+
+      - name: Upload IPA artifact
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: build/ipa/*.ipa
