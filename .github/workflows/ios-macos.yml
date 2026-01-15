@@ -66,5 +66,8 @@ jobs:
           cd ios
           pod install --repo-update
 
+      - name: Fix iOS privacy bundles
+        run: ruby ios/fix_privacy_bundles.rb
+
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign

@@ -38,6 +38,8 @@ import 'package:hggzk/features/splash/presentation/bloc/splash_event.dart';
 /// providing a centralized way to access and manage state across features.
 /// It follows the singleton pattern to ensure consistent state management.
 class AppBloc {
+  static bool _initialized = false;
+
   // Core Application Blocs
   static late final AuthBloc authBloc;
   static late final SettingsBloc settingsBloc;
@@ -59,6 +61,10 @@ class AppBloc {
   /// Initialize all blocs with their dependencies
   /// This method should be called after dependency injection is set up
   static void initialize() {
+    if (_initialized) {
+      return;
+    }
+
     // Core Application Blocs
     theme = ThemeBloc(prefs: sl());
 
@@ -189,6 +195,8 @@ class AppBloc {
       getCitiesUseCase: sl(),
       getCurrenciesUseCase: sl(),
     );
+
+    _initialized = true;
   }
 
   /// List of all BlocProviders for the application

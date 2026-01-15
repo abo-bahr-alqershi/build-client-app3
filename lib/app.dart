@@ -19,6 +19,7 @@ class HggzkApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    AppBloc.initialize();
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(
