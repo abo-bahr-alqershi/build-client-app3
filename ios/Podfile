@@ -47,7 +47,7 @@ post_install do |installer|
 
     is_privacy_target = target.name.match?(/privacy$/i)
 
-    if is_privacy_target
+    if false && is_privacy_target
       puts "[Podfile] Applying privacy target fix: #{target.name}"
       phases_to_remove = []
       target.build_phases.each do |phase|
@@ -94,11 +94,11 @@ post_install do |installer|
       
       unless is_privacy_target
         # Swift Configuration - CRITICAL for fixing crashes
-        config.build_settings['SWIFT_VERSION'] = '5.0'
-        config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
-        config.build_settings['SWIFT_OPTIMIZATION_LEVEL'] = '-Onone'
-        config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
-        config.build_settings['SWIFT_WHOLE_MODULE_OPTIMIZATION'] = 'NO'
+        config.build_settings.delete('SWIFT_VERSION')
+        config.build_settings.delete('ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES')
+        config.build_settings.delete('SWIFT_OPTIMIZATION_LEVEL')
+        config.build_settings.delete('SWIFT_COMPILATION_MODE')
+        config.build_settings.delete('SWIFT_WHOLE_MODULE_OPTIMIZATION')
       end
       
       unless is_privacy_target
@@ -108,9 +108,9 @@ post_install do |installer|
         config.build_settings['DEFINES_MODULE'] = 'YES'
         
         # Fix for Privacy Manifests (url_launcher issue)
-        config.build_settings['GENERATE_INFOPLIST_FILE'] = 'NO'
-        config.build_settings['SKIP_INSTALL'] = 'NO'
-        config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'NO'
+        config.build_settings.delete('GENERATE_INFOPLIST_FILE')
+        config.build_settings.delete('SKIP_INSTALL')
+        config.build_settings.delete('BUILD_LIBRARY_FOR_DISTRIBUTION')
         
         # Plugin-specific fixes
         if target.name == 'flutter_facebook_auth'
@@ -133,57 +133,59 @@ post_install do |installer|
         
         # Additional stability settings
         config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = '$(inherited) COCOAPODS=1'
-        config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Foundation'
+        config.build_settings.delete('OTHER_LDFLAGS')
       end
     end
   end
-  
-  # Remove privacy bundle references that cause build failures
-  installer.pods_project.targets.each do |target|
-    target.build_phases.each do |phase|
-      # Remove resource build phases for privacy bundles
-      if phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase)
-        phase.files.select do |file|
-          if file.display_name && file.display_name.match?(/privacy\.bundle/i)
-            phase.remove_build_file(file)
+
+  if false
+    # Remove privacy bundle references that cause build failures
+    installer.pods_project.targets.each do |target|
+      target.build_phases.each do |phase|
+        # Remove resource build phases for privacy bundles
+        if phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase)
+          phase.files.select do |file|
+            if file.display_name && file.display_name.match?(/privacy\.bundle/i)
+              phase.remove_build_file(file)
+            end
+          end
+        end
+        
+        # Remove copy files build phases for privacy bundles
+        if phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
+          phase.files.select do |file|
+            if file.display_name && file.display_name.match?(/privacy\.bundle/i)
+              phase.remove_build_file(file)
+            end
           end
         end
       end
-      
-      # Remove copy files build phases for privacy bundles
-      if phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
-        phase.files.select do |file|
-          if file.display_name && file.display_name.match?(/privacy\.bundle/i)
-            phase.remove_build_file(file)
+    end
+    
+    # Fix permissions
+    installer.pods_project.build_configurations.each do |config|
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+    end
+    
+    support_files_dir = File.join(__dir__, 'Pods', 'Target Support Files')
+    if Dir.exist?(support_files_dir)
+      Dir.glob(File.join(support_files_dir, '**', '*.xcfilelist')).each do |file|
+        begin
+          original = File.read(file)
+          filtered = original.lines.reject do |line|
+            line.include?('PrivacyInfo.xcprivacy') ||
+              line.match?(/privacy\.bundle/i) ||
+              line.match?(/_privacy/i)
+          end.join
+          if filtered != original
+            File.write(file, filtered)
           end
+        rescue StandardError
         end
       end
     end
+    
+    # Save changes
+    installer.pods_project.save
   end
-  
-  # Fix permissions
-  installer.pods_project.build_configurations.each do |config|
-    config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-  end
-  
-  support_files_dir = File.join(__dir__, 'Pods', 'Target Support Files')
-  if Dir.exist?(support_files_dir)
-    Dir.glob(File.join(support_files_dir, '**', '*.xcfilelist')).each do |file|
-      begin
-        original = File.read(file)
-        filtered = original.lines.reject do |line|
-          line.include?('PrivacyInfo.xcprivacy') ||
-            line.match?(/privacy\.bundle/i) ||
-            line.match?(/_privacy/i)
-        end.join
-        if filtered != original
-          File.write(file, filtered)
-        end
-      rescue StandardError
-      end
-    end
-  end
-  
-  # Save changes
-  installer.pods_project.save
 end
