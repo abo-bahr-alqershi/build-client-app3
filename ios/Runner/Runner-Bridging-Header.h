@@ -1,4 +1,5 @@
 #import <Flutter/Flutter.h>
+#import "GeneratedPluginRegistrant.h"
 #import <UIKit/UIKit.h>
 #import <Foundation/Foundation.h>
 #import <Firebase.h>
