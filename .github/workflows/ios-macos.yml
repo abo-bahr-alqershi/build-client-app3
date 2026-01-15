@@ -99,14 +99,40 @@ jobs:
             exit 1
           fi
 
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          IOS_P12_PASSWORD_CLEAN="$(printf %s "$IOS_P12_PASSWORD" | tr -d '\r\n')"
+          KEYCHAIN_PASSWORD_CLEAN="$(printf %s "$KEYCHAIN_PASSWORD" | tr -d '\r\n')"
+          if [ -z "${IOS_P12_PASSWORD_CLEAN:-}" ]; then
+            echo "Secret IOS_P12_PASSWORD is empty after trimming CR/LF"
+            exit 1
+          fi
+          if [ -z "${KEYCHAIN_PASSWORD_CLEAN:-}" ]; then
+            echo "Secret IOS_KEYCHAIN_PASSWORD is empty after trimming CR/LF"
+            exit 1
+          fi
+
+          echo "--- Certificate file info (diagnostic) ---"
+          ls -la "$CERT_P12" || true
+          file "$CERT_P12" || true
+          stat -f "%N %z bytes" "$CERT_P12" 2>/dev/null || true
+
+          echo "--- OpenSSL PKCS12 check (diagnostic) ---"
+          OPENSSL_ERR="$RUNNER_TEMP/openssl_p12_err.txt"
+          if openssl pkcs12 -in "$CERT_P12" -noout -info -passin pass:"$IOS_P12_PASSWORD_CLEAN" 2>"$OPENSSL_ERR"; then
+            echo "✅ openssl: password accepted for PKCS12"
+          else
+            echo "❌ openssl: failed to read PKCS12 with provided password"
+            sed -n '1,80p' "$OPENSSL_ERR" || true
+          fi
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           security set-keychain-settings -lut 21600 build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
 
           echo "--- Certificate file hash (diagnostic) ---"
           shasum -a 256 "$CERT_P12" || true
+          echo "Password length: ${#IOS_P12_PASSWORD}"
 
-          if security import "$CERT_P12" -k build.keychain -P "$IOS_P12_PASSWORD" -A; then
+          if security import "$CERT_P12" -k build.keychain -P "$IOS_P12_PASSWORD_CLEAN" -A; then
             echo "✅ Imported .p12 with provided password"
           else
             echo "⚠️ Import with provided password failed; trying empty password"
@@ -114,7 +140,7 @@ jobs:
             echo "✅ Imported .p12 with empty password"
           fi
           security list-keychains -d user -s build.keychain
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
 
           echo "--- Code signing identities (build.keychain) ---"
           security find-identity -v -p codesigning build.keychain || true
