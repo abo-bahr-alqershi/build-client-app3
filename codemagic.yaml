@@ -23,10 +23,29 @@ workflows:
       - name: Install pods
         script: cd ios && pod install --repo-update && cd ..
       
-      - name: Remove privacy bundles
+      - name: Fix privacy bundle issue (CRITICAL for Debug builds)
         script: |
+          # ULTIMATE FIX: Directly edit the Xcode project file to remove privacy bundle references
+          # This is the ONLY reliable way to fix this issue in Debug mode with Xcode 15+
+          
           cd ios
-          ruby -e 'require "xcodeproj"; p=Xcodeproj::Project.open("Runner.xcodeproj"); p.targets.each{|t| next unless t.name=="Runner"; t.build_phases.each{|ph| ph.files.to_a.each{|f| ph.files.delete(f) if f.file_ref&&f.file_ref.path&&f.file_ref.path.include?("privacy.bundle")}}}; p.save' || true
+          
+          # Backup the original project file
+          cp Runner.xcodeproj/project.pbxproj Runner.xcodeproj/project.pbxproj.backup
+          
+          # Remove ALL references to privacy bundles using perl
+          # This removes the file references and build phase entries
+          perl -i -pe 's/.*privacy\.bundle.*\n//g' Runner.xcodeproj/project.pbxproj
+          
+          echo "✅ Privacy bundle references removed from Xcode project"
+          
+          # Verify the changes
+          if grep -q "privacy.bundle" Runner.xcodeproj/project.pbxproj; then
+            echo "⚠️  Warning: Some privacy bundle references still exist"
+          else
+            echo "✅ All privacy bundle references successfully removed"
+          fi
+          
           cd ..
           
       - name: Build iOS DEBUG
