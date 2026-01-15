@@ -68,7 +68,12 @@ jobs:
           cd ios
           pod install --repo-update
 
+      - name: Build iOS (PR - no codesign)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: flutter build ios --release --no-codesign
+
       - name: Setup iOS code signing (keychain + provisioning profile)
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
@@ -128,7 +133,8 @@ jobs:
           mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
           cp "$PROFILE" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
 
-      - name: Build IPA (Debug)
+      - name: Build IPA (Release)
+        if: ${{ github.event_name != 'pull_request' }}
         env:
           BUNDLE_ID: com.hggzk.app
         run: |
@@ -157,7 +163,7 @@ jobs:
 
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -archivePath build/Runner.xcarchive \
@@ -174,6 +180,7 @@ jobs:
           ls -la build/ipa
 
       - name: Upload IPA artifact
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
