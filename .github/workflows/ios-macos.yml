@@ -1,0 +1,70 @@
+name: iOS (macOS)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'Enable SSH debug session (tmate). Only works for workflow_dispatch.'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  ios-build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      COCOAPODS_DISABLE_STATS: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: SSH debug (tmate)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.ssh }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Install CocoaPods
+        run: |
+          if ! command -v pod >/dev/null; then
+            sudo gem install cocoapods
+          fi
+          pod --version
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: |
+            ios/Pods
+            ios/.symlinks
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Pod install
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
