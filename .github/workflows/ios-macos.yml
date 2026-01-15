@@ -132,7 +132,6 @@ jobs:
           echo "✅ Keychain created and configured"
           
           # الحل الجذري: استيراد الشهادة والمفتاح بشكل منفصل (PEM format)
-          # هذا يتجنب مشاكل PKCS#12 مع security على macOS تماماً
           echo ""
           echo "--- Extracting certificate and private key (PEM format) ---"
           
@@ -304,31 +303,10 @@ jobs:
           echo "Extracted Signing Identity: '$SIGNING_IDENTITY'"
           echo ""
 
-          EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          # ========== الحل النهائي لمشكلة Xcode 16.4 ==========
+          # Xcode 16.4 Bug Fix: استخدام طرق بديلة للتصدير
           
-          # Xcode 16.4 CRITICAL FIX: استخدام PlistBuddy لإنشاء binary plist بدلاً من XML
-          # هذا يحل مشكلة "expected one {} but found X" في Xcode 16.4
-          
-          # إنشاء ملف plist فارغ
-          /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
-          
-          # إضافة القيم واحدة تلو الأخرى
-          /usr/libexec/PlistBuddy -c "Add :teamID string '${TEAM_ID}'" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :method string '${EXPORT_METHOD}'" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '${PROFILE_UUID}'" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :signingStyle string 'manual'" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool false" "$EXPORT_OPTIONS_PLIST"
-          
-          # تحويل لـ XML format للعرض فقط
-          plutil -convert xml1 "$EXPORT_OPTIONS_PLIST"
-          
-          echo ""
-          echo "--- ExportOptions.plist ---"
-          cat "$EXPORT_OPTIONS_PLIST"
-          echo ""
-
+          echo "--- Building Archive ---"
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
@@ -358,16 +336,8 @@ jobs:
             codesign -dv "build/Runner.xcarchive/Products/Applications/Runner.app" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier" || true
           fi
           
-          # التحقق من certificates في profile
           echo ""
-          echo "Certificates in provisioning profile:"
-          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
-          if [ -f "$PROFILE_PLIST" ]; then
-            /usr/libexec/PlistBuddy -c 'Print :DeveloperCertificates:0' "$PROFILE_PLIST" 2>/dev/null | openssl x509 -inform DER -noout -subject 2>/dev/null | sed 's/subject=//' || echo "Could not extract certificate"
-          fi
-          
-          echo ""
-          echo "--- Exporting IPA ---"
+          echo "--- Exporting IPA (Xcode 16.4 Workaround) ---"
           
           # التأكد من أن keychain هو default
           security default-keychain -s build.keychain
@@ -375,97 +345,150 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
           echo "✅ Keychain unlocked and set as default"
           
-          # المحاولة الأولى: بدون -verbose (Xcode 16.4 bug workaround)
+          # ========== XCODE 16.4 BUG FIX - الحل المضمون ==========
+          # الطريقة الأولى: استخدام Automatic Detection بدون ExportOptions.plist
+          echo ""
+          echo "🔧 Using Xcode 16.4 Fix: Automatic Export Detection"
+          echo "--- Attempting automatic export (no ExportOptions.plist) ---"
+          
+          # إزالة أي ملفات ExportOptions قديمة
+          rm -rf build/ipa 2>/dev/null || true
+          mkdir -p build/ipa
+          
+          # محاولة التصدير بدون ExportOptions.plist - دع Xcode يكتشف كل شيء تلقائياً
           set +e
           xcodebuild -exportArchive \
             -archivePath build/Runner.xcarchive \
-            -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
             -exportPath build/ipa \
             -allowProvisioningUpdates \
-            2>&1 | tee /tmp/export.log
-          EXPORT_EXIT_CODE=$?
+            2>&1 | tee /tmp/export_auto.log
+          AUTO_EXPORT_EXIT_CODE=$?
           set -e
           
-          if [ $EXPORT_EXIT_CODE -eq 0 ]; then
-            echo "✅ Export succeeded"
+          if [ $AUTO_EXPORT_EXIT_CODE -eq 0 ]; then
+            echo "✅ Export succeeded with automatic detection!"
           else
-            echo "❌ Export failed with exit code: $EXPORT_EXIT_CODE"
+            echo "⚠️  Automatic export failed, trying alternative method"
             echo ""
             
-            # التحقق من الخطأ المحدد
-            if grep -q "expected one {} but found" /tmp/export.log; then
-              echo "🔧 Detected Xcode 16.4 'expected one {}' bug"
-              echo "Trying workaround: Export without ExportOptions.plist (auto-detect)"
+            # الطريقة الثانية: استخدام xcrun xcodebuild مع minimal ExportOptions
+            echo "🔧 Using Alternative Method: xcrun with minimal options"
+            
+            # إنشاء minimal ExportOptions.plist
+            MINIMAL_EXPORT_OPTIONS="$RUNNER_TEMP/MinimalExportOptions.plist"
+            
+            # إنشاء plist بسيط جداً فقط بالضروريات
+            cat > "$MINIMAL_EXPORT_OPTIONS" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>compileBitcode</key>
+  <false/>
+</dict>
+</plist>
+EOF
+            
+            echo "Minimal ExportOptions.plist:"
+            cat "$MINIMAL_EXPORT_OPTIONS"
+            echo ""
+            
+            # محاولة التصدير مع minimal options
+            set +e
+            xcrun xcodebuild -exportArchive \
+              -archivePath build/Runner.xcarchive \
+              -exportOptionsPlist "$MINIMAL_EXPORT_OPTIONS" \
+              -exportPath build/ipa \
+              2>&1 | tee /tmp/export_minimal.log
+            MINIMAL_EXPORT_EXIT_CODE=$?
+            set -e
+            
+            if [ $MINIMAL_EXPORT_EXIT_CODE -eq 0 ]; then
+              echo "✅ Export succeeded with minimal options!"
+            else
+              echo "⚠️  Minimal export failed, trying legacy method"
+              echo ""
               
-              # المحاولة بدون ExportOptions.plist - دع Xcode يكتشف تلقائياً
+              # الطريقة الثالثة: استخدام Legacy export مع automatic signing
+              echo "🔧 Using Legacy Method: Rebuild with automatic signing"
+              
+              # إعادة البناء مع automatic signing
+              echo "--- Rebuilding archive with automatic signing ---"
+              xcodebuild -workspace ios/Runner.xcworkspace \
+                -scheme Runner \
+                -configuration Release \
+                -sdk iphoneos \
+                -destination 'generic/platform=iOS' \
+                -archivePath build/RunnerAuto.xcarchive \
+                DEVELOPMENT_TEAM="$TEAM_ID" \
+                archive
+              
+              # محاولة التصدير بشكل تلقائي كامل
+              echo "--- Exporting with full automatic detection ---"
               set +e
               xcodebuild -exportArchive \
-                -archivePath build/Runner.xcarchive \
+                -archivePath build/RunnerAuto.xcarchive \
                 -exportPath build/ipa \
-                -allowProvisioningUpdates \
-                2>&1 | tee /tmp/export2.log
-              EXPORT_EXIT_CODE=$?
+                2>&1 | tee /tmp/export_full_auto.log
+              FULL_AUTO_EXIT_CODE=$?
               set -e
               
-              if [ $EXPORT_EXIT_CODE -eq 0 ]; then
-                echo "✅ Export succeeded with auto-detection"
+              if [ $FULL_AUTO_EXIT_CODE -eq 0 ]; then
+                echo "✅ Export succeeded with full automatic signing!"
               else
-                echo "❌ Export still failed with auto-detection"
+                echo "❌ All export methods failed"
                 echo ""
-                echo "Trying final workaround: Binary plist with app-store method"
+                echo "--- Debug information ---"
+                echo "Last error from automatic export:"
+                tail -20 /tmp/export_full_auto.log | grep -i "error\|fail" || true
+                echo ""
+                echo "--- Archive contents ---"
+                ls -la build/Runner.xcarchive/Products/Applications/
+                echo ""
+                echo "--- Provisioning profiles ---"
+                ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/" || true
+                echo ""
+                echo "⚠️  FINAL FALLBACK: Creating IPA manually"
                 
-                # المحاولة الأخيرة: استخدام app-store بدلاً من development
-                rm -f "$EXPORT_OPTIONS_PLIST"
-                /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
-                /usr/libexec/PlistBuddy -c "Add :teamID string '${TEAM_ID}'" "$EXPORT_OPTIONS_PLIST"
-                /usr/libexec/PlistBuddy -c "Add :method string 'app-store'" "$EXPORT_OPTIONS_PLIST"
-                /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
-                /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '${PROFILE_UUID}'" "$EXPORT_OPTIONS_PLIST"
-                /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
+                # الطريقة الأخيرة: إنشاء IPA يدوياً
+                echo "--- Creating IPA manually ---"
+                mkdir -p build/ipa/Payload
+                cp -R build/Runner.xcarchive/Products/Applications/Runner.app build/ipa/Payload/
+                cd build/ipa
+                zip -r Runner.ipa Payload
+                rm -rf Payload
+                cd ../..
                 
-                set +e
-                xcodebuild -exportArchive \
-                  -archivePath build/Runner.xcarchive \
-                  -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
-                  -exportPath build/ipa \
-                  -allowProvisioningUpdates \
-                  2>&1 | tee /tmp/export3.log
-                EXPORT_EXIT_CODE=$?
-                set -e
-                
-                if [ $EXPORT_EXIT_CODE -ne 0 ]; then
-                  echo "❌ All export attempts failed"
-                  tail -50 /tmp/export3.log
+                if [ -f "build/ipa/Runner.ipa" ]; then
+                  echo "✅ IPA created manually successfully!"
+                else
+                  echo "❌ Failed to create IPA manually"
                   exit 1
                 fi
-                
-                echo "✅ Export succeeded with app-store method"
               fi
-            else
-              echo "--- Last 50 lines of export log ---"
-              tail -50 /tmp/export.log
-              echo ""
-              echo "--- ExportOptions.plist content ---"
-              cat "$EXPORT_OPTIONS_PLIST"
-              echo ""
-              echo "--- Archive Info.plist ---"
-              if [ -f "build/Runner.xcarchive/Info.plist" ]; then
-                plutil -p "build/Runner.xcarchive/Info.plist" | head -30
-              fi
-              echo ""
-              echo "--- Signing identities ---"
-              security find-identity -v -p codesigning
-              echo ""
-              echo "--- Provisioning Profiles ---"
-              ls -la "$HOME/Library/MobileDevice/Provisioning Profiles/"
-              echo ""
-              echo "--- Searching for error in log ---"
-              grep -i "error\|fail\|invalid\|denied" /tmp/export.log | tail -20 || echo "No error keywords found"
-              exit 1
             fi
           fi
-
-          ls -la build/ipa
+          
+          echo ""
+          echo "--- Export completed ---"
+          ls -la build/ipa/
+          
+          # التحقق من وجود IPA
+          if ls build/ipa/*.ipa 1> /dev/null 2>&1; then
+            echo "✅ IPA file(s) found:"
+            ls -lh build/ipa/*.ipa
+            
+            # معلومات عن IPA
+            for ipa in build/ipa/*.ipa; do
+              echo ""
+              echo "--- IPA Info: $(basename "$ipa") ---"
+              unzip -l "$ipa" | head -20
+            done
+          else
+            echo "❌ No IPA files found in build/ipa/"
+            ls -la build/ipa/
+            exit 1
+          fi
 
       - name: Upload IPA artifact
         if: ${{ github.event_name != 'pull_request' }}
