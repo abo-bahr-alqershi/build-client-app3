@@ -51,15 +51,18 @@ jobs:
             ios/.symlinks
             ~/Library/Caches/CocoaPods
             ~/.cocoapods
-          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile') }}
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile', 'pubspec.lock') }}
           restore-keys: |
             ${{ runner.os }}-pods-
+
+      - name: Flutter clean
+        run: flutter clean
 
       - name: Flutter pub get
         run: flutter pub get
 
-      # - name: Run tests
-      #   run: flutter test
+      - name: Run tests
+        run: flutter test
 
       - name: Pod install
         run: |

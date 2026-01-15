@@ -43,6 +43,33 @@ def fix_privacy_bundles
         
         files_to_remove.each { |file| build_phase.files.delete(file) }
       end
+
+      if build_phase.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase)
+        original_input_paths = (build_phase.input_paths || []).dup
+        original_output_paths = (build_phase.output_paths || []).dup
+        original_input_file_lists = (build_phase.input_file_list_paths || []).dup
+        original_output_file_lists = (build_phase.output_file_list_paths || []).dup
+
+        build_phase.input_paths = original_input_paths.reject do |p|
+          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
+        end
+        build_phase.output_paths = original_output_paths.reject do |p|
+          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
+        end
+        build_phase.input_file_list_paths = original_input_file_lists.reject do |p|
+          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
+        end
+        build_phase.output_file_list_paths = original_output_file_lists.reject do |p|
+          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
+        end
+
+        if build_phase.input_paths != original_input_paths ||
+           build_phase.output_paths != original_output_paths ||
+           build_phase.input_file_list_paths != original_input_file_lists ||
+           build_phase.output_file_list_paths != original_output_file_lists
+          modified = true
+        end
+      end
     end
     
     # Remove privacy bundle file references
@@ -51,6 +78,23 @@ def fix_privacy_bundles
         puts "  ❌ Removing file reference: #{file_ref.path}"
         file_ref.remove_from_project
         modified = true
+      end
+    end
+  end
+
+  support_files_dir = File.join(__dir__, 'Pods', 'Target Support Files')
+  if Dir.exist?(support_files_dir)
+    Dir.glob(File.join(support_files_dir, '**', '*.xcfilelist')).each do |file|
+      begin
+        original = File.read(file)
+        filtered = original.lines.reject do |line|
+          line.include?('PrivacyInfo.xcprivacy') || line.match?(/privacy\.bundle/i) || line.match?(/_privacy/i)
+        end.join
+        if filtered != original
+          File.write(file, filtered)
+          modified = true
+        end
+      rescue StandardError
       end
     end
   end
