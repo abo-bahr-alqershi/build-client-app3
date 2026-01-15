@@ -142,17 +142,18 @@ jobs:
           
           # استخراج الشهادة
           openssl pkcs12 -in "$CERT_P12" -clcerts -nokeys -out "$CERT_PEM" \
-            -passin pass:"$IOS_P12_PASSWORD_CLEAN" -passout pass:
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN"
           
-          # استخراج المفتاح الخاص (بدون تشفير)
-          openssl pkcs12 -in "$CERT_P12" -nocerts -out "$KEY_PEM" \
-            -passin pass:"$IOS_P12_PASSWORD_CLEAN" -passout pass:
+          # استخراج المفتاح الخاص (بدون تشفير باستخدام -nodes)
+          openssl pkcs12 -in "$CERT_P12" -nocerts -nodes -out "$KEY_PEM" \
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN"
           
           # استخراج CA certificates (إن وُجدت)
           openssl pkcs12 -in "$CERT_P12" -cacerts -nokeys -out "$CA_CERTS" \
-            -passin pass:"$IOS_P12_PASSWORD_CLEAN" -passout pass: 2>/dev/null || true
+            -passin pass:"$IOS_P12_PASSWORD_CLEAN" 2>/dev/null || true
           
           echo "✅ Extracted certificate and key to PEM format"
+          ls -lh "$CERT_PEM" "$KEY_PEM"
           
           # استيراد الشهادة للـ keychain
           echo ""
