@@ -1,57 +1,142 @@
-# Codemagic CI/CD Configuration for iOS Build - DEBUG MODE
+# Codemagic iOS Build Configuration - Optimized
 workflows:
-  default-workflow:
-    name: iOS Build Debug
+  ios-debug:
+    name: iOS Debug Build
     max_build_duration: 120
     instance_type: mac_mini_m2
+    
     environment:
       ios_signing:
         distribution_type: development
         bundle_identifier: com.hggzk.app
       flutter: stable
-      xcode: latest
+      xcode: 15.0
       cocoapods: default
-    scripts:
-      - name: Setup code signing
-        script: xcode-project use-profiles
-          
-      - name: Clean environment
-        script: |
-          rm -rf ~/Library/Developer/Xcode/DerivedData ios/Pods ios/Podfile.lock
-          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
-          
-      - name: Install pods
-        script: cd ios && pod install --repo-update && cd ..
       
-      - name: Fix privacy bundle issue (CRITICAL for Debug builds)
+      vars:
+        LANG: en_US.UTF-8
+        LANGUAGE: en_US.UTF-8
+        LC_ALL: en_US.UTF-8
+    
+    triggering:
+      events:
+        - push
+      branch_patterns:
+        - pattern: '*'
+          include: true
+    
+    scripts:
+      # 1. Setup environment
+      - name: Setup environment
         script: |
-          # ULTIMATE FIX: Directly edit the Xcode project file to remove privacy bundle references
-          # This is the ONLY reliable way to fix this issue in Debug mode with Xcode 15+
+          echo "🔧 Setting up build environment..."
+          flutter --version
+          pod --version
+          xcodebuild -version
           
+      # 2. Setup code signing
+      - name: Configure code signing
+        script: xcode-project use-profiles
+      
+      # 3. Clean build environment
+      - name: Clean build artifacts
+        script: |
+          echo "🧹 Cleaning build environment..."
+          rm -rf ~/Library/Developer/Xcode/DerivedData
+          rm -rf ios/build
+          rm -rf ios/Pods
+          rm -f ios/Podfile.lock
+          rm -rf ~/.pub-cache/hosted/pub.dev/url_launcher*
+          
+      # 4. Get Flutter dependencies
+      - name: Install Flutter dependencies
+        script: |
+          echo "📦 Installing Flutter dependencies..."
+          flutter pub get
+          
+      # 5. Fix Swift configuration
+      - name: Configure Swift settings
+        script: |
+          echo "⚙️ Configuring Swift settings..."
+          echo "SWIFT_VERSION = 5.0" >> ios/Flutter/Generated.xcconfig
+          echo "SWIFT_COMPILATION_MODE = singlefile" >> ios/Flutter/Generated.xcconfig
+          
+      # 6. Install CocoaPods
+      - name: Install iOS dependencies
+        script: |
+          echo "📱 Installing iOS dependencies..."
           cd ios
-          
-          # Backup the original project file
-          cp Runner.xcodeproj/project.pbxproj Runner.xcodeproj/project.pbxproj.backup
-          
-          # Remove ALL references to privacy bundles using perl
-          # This removes the file references and build phase entries
-          perl -i -pe 's/.*privacy\.bundle.*\n//g' Runner.xcodeproj/project.pbxproj
-          
-          echo "✅ Privacy bundle references removed from Xcode project"
-          
-          # Verify the changes
-          if grep -q "privacy.bundle" Runner.xcodeproj/project.pbxproj; then
-            echo "⚠️  Warning: Some privacy bundle references still exist"
-          else
-            echo "✅ All privacy bundle references successfully removed"
-          fi
-          
+          pod cache clean --all
+          pod deintegrate
+          pod setup
+          pod install --repo-update --verbose
           cd ..
           
-      - name: Build iOS DEBUG
-        script: flutter build ipa --debug --export-options-plist /Users/builder/export_options.plist
+      # 7. Fix privacy bundle issues
+      - name: Fix privacy bundle references
+        script: |
+          echo "🔨 Fixing privacy bundle issues..."
+          
+          # Function to remove privacy bundle references
+          fix_project_file() {
+            local project_file="$1"
+            
+            if [ -f "$project_file" ]; then
+              echo "Processing: $project_file"
+              
+              # Backup
+              cp "$project_file" "${project_file}.backup"
+              
+              # Remove privacy bundle references
+              sed -i '' '/_privacy\.bundle/d' "$project_file"
+              sed -i '' '/PrivacyInfo\.xcprivacy/d' "$project_file"
+              sed -i '' '/privacy_bundle_resource/d' "$project_file"
+              
+              echo "✅ Fixed: $project_file"
+            fi
+          }
+          
+          # Fix main project
+          fix_project_file "ios/Runner.xcodeproj/project.pbxproj"
+          
+          # Fix Pods project
+          fix_project_file "ios/Pods/Pods.xcodeproj/project.pbxproj"
+          
+          # Remove physical privacy bundle files
+          find ios -name "*privacy.bundle" -type d -exec rm -rf {} + 2>/dev/null || true
+          find ios -name "PrivacyInfo.xcprivacy" -type f -delete 2>/dev/null || true
+          
+      # 8. Verify project integrity
+      - name: Verify project configuration
+        script: |
+          echo "✅ Verifying project configuration..."
+          cd ios
+          xcodebuild -workspace Runner.xcworkspace \
+                     -scheme Runner \
+                     -configuration Debug \
+                     -sdk iphoneos \
+                     -showBuildSettings | grep -E "SWIFT_VERSION|IPHONEOS_DEPLOYMENT"
+          cd ..
+          
+      # 9. Build iOS app
+      - name: Build iOS DEBUG IPA
+        script: |
+          echo "🏗️ Building iOS app..."
+          flutter build ipa \
+            --debug \
+            --export-options-plist /Users/builder/export_options.plist \
+            --verbose
+            
+      # 10. Verify build output
+      - name: Verify build artifacts
+        script: |
+          echo "📦 Build artifacts:"
+          ls -la build/ios/ipa/
+          
     artifacts:
       - build/ios/ipa/*.ipa
+      - build/ios/archive/Runner.xcarchive
+      
     publishing:
       email:
         recipients:
@@ -59,3 +144,11 @@ workflows:
         notify:
           success: true
           failure: true
+      
+      # Optional: Upload to TestFlight
+      # app_store_connect:
+      #   api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+      #   key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+      #   issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+      #   submit_to_testflight: false
+      #   submit_to_app_store: false
