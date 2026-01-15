@@ -47,8 +47,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ios/Pods
-            ios/.symlinks
             ~/Library/Caches/CocoaPods
             ~/.cocoapods
           key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile', 'pubspec.lock') }}
@@ -66,11 +64,23 @@ jobs:
 
       - name: Pod install
         run: |
+          rm -rf ios/Pods ios/Podfile.lock ios/.symlinks
           cd ios
           pod install --repo-update
 
       - name: Fix iOS privacy bundles
         run: ruby ios/fix_privacy_bundles.rb
+
+      - name: Diagnose privacy targets (Pods.xcodeproj)
+        run: |
+          if [ -f ios/Pods/Pods.xcodeproj/project.pbxproj ]; then
+            echo "--- privacy targets in Pods.xcodeproj ---"
+            grep -n "_privacy" ios/Pods/Pods.xcodeproj/project.pbxproj | head -n 60 || true
+            echo "--- executable/mach-o hints (sample) ---"
+            grep -n "EXECUTABLE_NAME\|MACH_O_TYPE\|EMBEDDED_CONTENT_CONTAINS_SWIFT\|ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES" ios/Pods/Pods.xcodeproj/project.pbxproj | head -n 80 || true
+          else
+            echo "Pods.xcodeproj not found"
+          fi
 
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign

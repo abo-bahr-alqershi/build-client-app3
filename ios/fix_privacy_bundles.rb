@@ -8,7 +8,7 @@
 require 'xcodeproj'
 
 def fix_privacy_bundles
-  project_path = 'Runner.xcodeproj'
+  project_path = File.exist?('Pods/Pods.xcodeproj') ? 'Pods/Pods.xcodeproj' : 'Runner.xcodeproj'
   
   unless File.exist?(project_path)
     puts "❌ Error: #{project_path} not found!"
@@ -16,16 +16,18 @@ def fix_privacy_bundles
   end
   
   project = Xcodeproj::Project.open(project_path)
+  puts "🔧 Patching Xcode project: #{project_path}"
   
   modified = false
   
   # Find and remove privacy bundle references
   project.targets.each do |target|
-    next unless target.name == 'Runner'
+    next unless target.name.match?(/privacy$/i)
     
     puts "🔍 Processing target: #{target.name}"
     
     # Remove privacy bundles from Copy Resources phase
+    phases_to_remove = []
     target.build_phases.each do |build_phase|
       if build_phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase) ||
          build_phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
@@ -45,32 +47,41 @@ def fix_privacy_bundles
       end
 
       if build_phase.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase)
-        original_input_paths = (build_phase.input_paths || []).dup
-        original_output_paths = (build_phase.output_paths || []).dup
-        original_input_file_lists = (build_phase.input_file_list_paths || []).dup
-        original_output_file_lists = (build_phase.output_file_list_paths || []).dup
-
-        build_phase.input_paths = original_input_paths.reject do |p|
-          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
-        end
-        build_phase.output_paths = original_output_paths.reject do |p|
-          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
-        end
-        build_phase.input_file_list_paths = original_input_file_lists.reject do |p|
-          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
-        end
-        build_phase.output_file_list_paths = original_output_file_lists.reject do |p|
-          p.include?('PrivacyInfo.xcprivacy') || p.match?(/privacy\.bundle/i) || p.match?(/_privacy/i)
-        end
-
-        if build_phase.input_paths != original_input_paths ||
-           build_phase.output_paths != original_output_paths ||
-           build_phase.input_file_list_paths != original_input_file_lists ||
-           build_phase.output_file_list_paths != original_output_file_lists
-          modified = true
-        end
+        phases_to_remove << build_phase
       end
     end
+
+    phases_to_remove.each do |phase|
+      target.build_phases.delete(phase)
+      modified = true
+    end
+
+    target.build_configurations.each do |config|
+      config.build_settings['PRODUCT_TYPE'] = 'com.apple.product-type.bundle'
+      config.build_settings['SKIP_INSTALL'] = 'YES'
+      config.build_settings['WRAPPER_EXTENSION'] = 'bundle'
+
+      config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'NO'
+      config.build_settings['EMBEDDED_CONTENT_CONTAINS_SWIFT'] = 'NO'
+      config.build_settings['DEFINES_MODULE'] = 'NO'
+
+      config.build_settings['EXECUTABLE_NAME'] = ''
+      config.build_settings['MACH_O_TYPE'] = 'none'
+
+      config.build_settings['CODE_SIGN_IDENTITY'] = ''
+      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+
+      config.build_settings.delete('LD_RUNPATH_SEARCH_PATHS')
+      config.build_settings.delete('DYLIB_INSTALL_NAME_BASE')
+      config.build_settings.delete('LIBRARY_SEARCH_PATHS')
+      config.build_settings.delete('OTHER_LDFLAGS')
+      config.build_settings.delete('SWIFT_VERSION')
+      config.build_settings.delete('SWIFT_COMPILATION_MODE')
+      config.build_settings.delete('SWIFT_ACTIVE_COMPILATION_CONDITIONS')
+      config.build_settings.delete('SWIFT_INCLUDE_PATHS')
+    end
+    modified = true
     
     # Remove privacy bundle file references
     project.files.each do |file_ref|

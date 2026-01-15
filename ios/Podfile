@@ -44,51 +44,97 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+
+    is_privacy_target = target.name.match?(/privacy$/i)
+
+    if is_privacy_target
+      puts "[Podfile] Applying privacy target fix: #{target.name}"
+      phases_to_remove = []
+      target.build_phases.each do |phase|
+        if phase.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase) ||
+            phase.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase)
+          phases_to_remove << phase
+        elsif phase.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase)
+          phases_to_remove << phase
+        elsif phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase) &&
+            (phase.name == 'CopySwiftLibs' || phase.dst_subfolder_spec == 11)
+          phases_to_remove << phase
+        end
+      end
+      phases_to_remove.each { |phase| target.build_phases.delete(phase) }
+
+      target.build_configurations.each do |config|
+        config.build_settings['PRODUCT_TYPE'] = 'com.apple.product-type.bundle'
+        config.build_settings['SKIP_INSTALL'] = 'YES'
+        config.build_settings['WRAPPER_EXTENSION'] = 'bundle'
+        config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'NO'
+        config.build_settings['EMBEDDED_CONTENT_CONTAINS_SWIFT'] = 'NO'
+        config.build_settings['DEFINES_MODULE'] = 'NO'
+        config.build_settings['EXECUTABLE_NAME'] = ''
+        config.build_settings['MACH_O_TYPE'] = 'none'
+        config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+        config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+        config.build_settings['CODE_SIGN_IDENTITY'] = ''
+
+        config.build_settings.delete('LD_RUNPATH_SEARCH_PATHS')
+        config.build_settings.delete('DYLIB_INSTALL_NAME_BASE')
+        config.build_settings.delete('LIBRARY_SEARCH_PATHS')
+        config.build_settings.delete('OTHER_LDFLAGS')
+        config.build_settings.delete('SWIFT_VERSION')
+        config.build_settings.delete('SWIFT_COMPILATION_MODE')
+        config.build_settings.delete('SWIFT_ACTIVE_COMPILATION_CONDITIONS')
+        config.build_settings.delete('SWIFT_INCLUDE_PATHS')
+      end
+    end
     
     target.build_configurations.each do |config|
       # Base Configuration
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
       config.build_settings['ENABLE_BITCODE'] = 'NO'
       
-      # Swift Configuration - CRITICAL for fixing crashes
-      config.build_settings['SWIFT_VERSION'] = '5.0'
-      config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
-      config.build_settings['SWIFT_OPTIMIZATION_LEVEL'] = '-Onone'
-      config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
-      config.build_settings['SWIFT_WHOLE_MODULE_OPTIMIZATION'] = 'NO'
-      
-      # Module Configuration
-      config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
-      config.build_settings['SWIFT_INSTALL_OBJC_HEADER'] = 'YES'
-      config.build_settings['DEFINES_MODULE'] = 'YES'
-      
-      # Fix for Privacy Manifests (url_launcher issue)
-      config.build_settings['GENERATE_INFOPLIST_FILE'] = 'NO'
-      config.build_settings['SKIP_INSTALL'] = 'NO'
-      config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'NO'
-      
-      # Plugin-specific fixes
-      if target.name == 'flutter_facebook_auth'
-        config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG'
-        config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -D DEBUG'
+      unless is_privacy_target
+        # Swift Configuration - CRITICAL for fixing crashes
+        config.build_settings['SWIFT_VERSION'] = '5.0'
+        config.build_settings['ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES'] = 'YES'
+        config.build_settings['SWIFT_OPTIMIZATION_LEVEL'] = '-Onone'
+        config.build_settings['SWIFT_COMPILATION_MODE'] = 'singlefile'
+        config.build_settings['SWIFT_WHOLE_MODULE_OPTIMIZATION'] = 'NO'
       end
       
-      if target.name == 'google_sign_in_ios'
-        config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
+      unless is_privacy_target
+        # Module Configuration
+        config.build_settings['CLANG_ENABLE_MODULES'] = 'YES'
+        config.build_settings['SWIFT_INSTALL_OBJC_HEADER'] = 'YES'
+        config.build_settings['DEFINES_MODULE'] = 'YES'
+        
+        # Fix for Privacy Manifests (url_launcher issue)
+        config.build_settings['GENERATE_INFOPLIST_FILE'] = 'NO'
+        config.build_settings['SKIP_INSTALL'] = 'NO'
+        config.build_settings['BUILD_LIBRARY_FOR_DISTRIBUTION'] = 'NO'
+        
+        # Plugin-specific fixes
+        if target.name == 'flutter_facebook_auth'
+          config.build_settings['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = 'DEBUG'
+          config.build_settings['OTHER_SWIFT_FLAGS'] = '$(inherited) -D DEBUG'
+        end
+        
+        if target.name == 'google_sign_in_ios'
+          config.build_settings['SWIFT_SUPPRESS_WARNINGS'] = 'YES'
+        end
+        
+        # Fix for url_launcher and sqflite privacy bundles
+        if target.name.include?('url_launcher') || target.name.include?('sqflite')
+          config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "org.cocoapods.#{target.name.gsub('_', '-')}"
+          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+        end
+        
+        # Architecture exclusions for simulator
+        config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
+        
+        # Additional stability settings
+        config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = '$(inherited) COCOAPODS=1'
+        config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Foundation'
       end
-      
-      # Fix for url_launcher and sqflite privacy bundles
-      if target.name.include?('url_launcher') || target.name.include?('sqflite')
-        config.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = "org.cocoapods.#{target.name.gsub('_', '-')}"
-        config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-      end
-      
-      # Architecture exclusions for simulator
-      config.build_settings['EXCLUDED_ARCHS[sdk=iphonesimulator*]'] = 'arm64'
-      
-      # Additional stability settings
-      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] = '$(inherited) COCOAPODS=1'
-      config.build_settings['OTHER_LDFLAGS'] = '$(inherited) -framework Foundation'
     end
   end
   
@@ -98,8 +144,7 @@ post_install do |installer|
       # Remove resource build phases for privacy bundles
       if phase.is_a?(Xcodeproj::Project::Object::PBXResourcesBuildPhase)
         phase.files.select do |file|
-          if file.display_name && (file.display_name.include?('privacy') || 
-                                   file.display_name.include?('PrivacyInfo'))
+          if file.display_name && file.display_name.match?(/privacy\.bundle/i)
             phase.remove_build_file(file)
           end
         end
@@ -108,7 +153,7 @@ post_install do |installer|
       # Remove copy files build phases for privacy bundles
       if phase.is_a?(Xcodeproj::Project::Object::PBXCopyFilesBuildPhase)
         phase.files.select do |file|
-          if file.display_name && file.display_name.include?('privacy')
+          if file.display_name && file.display_name.match?(/privacy\.bundle/i)
             phase.remove_build_file(file)
           end
         end
