@@ -80,7 +80,7 @@ dependencies:
 
   # Added - required by code
   carousel_slider: ^5.1.1
-  url_launcher: ^6.3.0
+  # url_launcher: 6.1.14
   package_info_plus: ^8.0.2
   device_info_plus: ^9.0.0
 
