@@ -21,10 +21,6 @@ workflows:
           pod cache clean --all
           pod deintegrate || true
           pod install --repo-update
-          
-          # Run privacy bundle fix script
-          ruby fix_privacy_bundles.rb || echo "Privacy bundle fix script failed, continuing anyway..."
-          
           cd ..
       
       - name: Fix privacy bundle build issues (Critical for Xcode 15+)
@@ -35,9 +31,31 @@ workflows:
           # Clean all corrupted build artifacts
           rm -rf ~/Library/Developer/Xcode/DerivedData/*
           
-          # Force clean Flutter build cache
-          flutter clean
-          flutter pub get
+          # Remove problematic privacy bundle references from Xcode project
+          cd ios
+          
+          # Use Ruby to remove privacy bundle file references from Runner.xcodeproj
+          ruby -e "
+          require 'xcodeproj'
+          project_path = 'Runner.xcodeproj'
+          project = Xcodeproj::Project.open(project_path)
+          
+          project.targets.each do |target|
+            next unless target.name == 'Runner'
+            
+            target.build_phases.each do |phase|
+              phase.files.to_a.each do |file|
+                if file.file_ref && file.file_ref.path && file.file_ref.path.include?('privacy.bundle')
+                  puts \"Removing: #{file.file_ref.path}\"
+                  phase.remove_file_reference(file.file_ref)
+                end
+              end
+            end
+          end
+          
+          project.save
+          puts 'Privacy bundle references removed successfully'
+          " || echo "Ruby script failed, continuing..."
           
           cd ..
           
@@ -45,5 +63,4 @@ workflows:
         script: |
           # Use --release mode which has better plugin compatibility
           flutter build ipa --release \
-            --export-options-plist /Users/builder/export_options.plist \
-            --verbose
+            --export-options-plist /Users/builder/export_options.plist

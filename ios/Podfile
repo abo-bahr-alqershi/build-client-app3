@@ -105,6 +105,26 @@ post_install do |installer|
     end
   end
   
+  # CRITICAL FIX: Remove privacy bundle references from Runner target
+  # This is the main cause of the build failure on Xcode 15+
+  installer.aggregate_targets.each do |aggregate_target|
+    aggregate_target.user_project.targets.each do |target|
+      target.build_phases.each do |build_phase|
+        if build_phase.is_a?(Xcodeproj::Project::Object::PBXFrameworksBuildPhase)
+          build_phase.files.each do |file|
+            if file.file_ref && file.file_ref.path&.include?('privacy.bundle')
+              puts "Removing privacy bundle reference: #{file.file_ref.path}"
+              build_phase.files.delete(file)
+            end
+          end
+        end
+      end
+    end
+    
+    # Save the modified project
+    aggregate_target.user_project.save
+  end
+  
   # Fix file permissions (important for CI/CD)
   installer.pods_project.targets.each do |target|
     shell_script_path = "#{installer.pods_project.path}/../.symlinks/plugins/#{target.name}/ios"
