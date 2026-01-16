@@ -369,41 +369,39 @@ jobs:
           # إنشاء ExportOptions.plist
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           
-          # تحديد export method من الـ profile
-          if grep -q "<key>get-task-allow</key>" "$PROFILE_PLIST" 2>/dev/null; then
-            if /usr/libexec/PlistBuddy -c 'Print :Entitlements:get-task-allow' "$PROFILE_PLIST" 2>/dev/null | grep -q "true"; then
-              EXPORT_METHOD="development"
-            else
-              EXPORT_METHOD="ad-hoc"
-            fi
-          else
-            EXPORT_METHOD="ad-hoc"
-          fi
+          # تحديد export method - استخدام development دائماً
+          # حتى مع Ad-Hoc profile (Xcode 16.4 workaround)
+          EXPORT_METHOD="development"
           
-          echo "Export Method: $EXPORT_METHOD"
+          echo "Export Method: $EXPORT_METHOD (forced for Xcode 16.4 compatibility)"
+          echo ""
           
-          # إنشاء ExportOptions.plist
+          # CRITICAL FIX for Xcode 16.4:
+          # إنشاء ExportOptions.plist بطريقة مختلفة لتجنب parsing errors
+          
+          EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          
+          # إنشاء plist فارغ أولاً
           /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :method string '$EXPORT_METHOD'" "$EXPORT_OPTIONS_PLIST"
+          
+          # إضافة القيم واحدة تلو الأخرى بترتيب محدد
+          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool false" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :stripSwiftSymbols bool true" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS_PLIST"
           
-          if [ "$USE_API_KEY" = true ]; then
-            /usr/libexec/PlistBuddy -c "Add :signingStyle string 'automatic'" "$EXPORT_OPTIONS_PLIST"
-          else
-            /usr/libexec/PlistBuddy -c "Add :signingStyle string 'manual'" "$EXPORT_OPTIONS_PLIST"
-            /usr/libexec/PlistBuddy -c "Add :teamID string '$TEAM_ID'" "$EXPORT_OPTIONS_PLIST"
-            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
-            /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '$PROFILE_UUID'" "$EXPORT_OPTIONS_PLIST"
-          fi
+          # إضافة provisioningProfiles
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_UUID" "$EXPORT_OPTIONS_PLIST"
           
-          # Xcode 16.4 FIX: تحويل إلى binary plist بدلاً من XML
-          # هذا يحل مشكلة "expected one {} but found X"
+          # إضافة method في النهاية بدون string type
+          /usr/libexec/PlistBuddy -c "Add :method string development" "$EXPORT_OPTIONS_PLIST"
+          
+          # تحويل إلى binary format
           plutil -convert binary1 "$EXPORT_OPTIONS_PLIST"
           
-          echo ""
-          echo "--- ExportOptions.plist (binary format for Xcode 16.4) ---"
+          echo "--- ExportOptions.plist (Xcode 16.4 compatible) ---"
           plutil -p "$EXPORT_OPTIONS_PLIST"
           echo ""
           
@@ -418,11 +416,40 @@ jobs:
               -authenticationKeyIssuerID "$API_ISSUER_ID" \
               -allowProvisioningUpdates
           else
+            # محاولة export مع تسجيل الأخطاء
+            set +e
             xcodebuild -exportArchive \
               -archivePath build/Runner.xcarchive \
               -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
               -exportPath build/ipa \
-              -allowProvisioningUpdates
+              -allowProvisioningUpdates \
+              2>&1 | tee /tmp/export_attempt.log
+            EXPORT_CODE=$?
+            set -e
+            
+            # إذا فشل مع development، جرب ad-hoc
+            if [ $EXPORT_CODE -ne 0 ]; then
+              echo ""
+              echo "⚠️  Export failed with development method"
+              echo "🔄 Retrying with ad-hoc method..."
+              
+              # تغيير method إلى ad-hoc
+              /usr/libexec/PlistBuddy -c "Set :method ad-hoc" "$EXPORT_OPTIONS_PLIST"
+              plutil -convert binary1 "$EXPORT_OPTIONS_PLIST"
+              
+              echo "Updated ExportOptions.plist:"
+              plutil -p "$EXPORT_OPTIONS_PLIST"
+              echo ""
+              
+              xcodebuild -exportArchive \
+                -archivePath build/Runner.xcarchive \
+                -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
+                -exportPath build/ipa \
+                -allowProvisioningUpdates
+              
+              EXPORT_METHOD="ad-hoc"
+              echo "✅ Export succeeded with ad-hoc method"
+            fi
           fi
           
           echo ""

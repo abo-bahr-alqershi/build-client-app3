@@ -136,10 +136,9 @@ gh auth login
 cat /tmp/api_key_base64.txt
 ```
 
-القيمة الحالية (انسخها):
-```
-LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JR1RBZ0VBTUJNR0J5cU
-dTTTQ5QWdFR0NDcUdTTTQ5QXdFSEJIa3dkd0lCQVFRZ0huc2twRzY1b2c0ZVZqNGcKdXYxelo4ZTErL0h4TGRBNFVKelFhby9vL09TZ0NnWUlLb1pJemowREFRZWhSQU5DQUFTQkkwVG9XcmNGRi9uYgpqM1V4d0xqZDBOaGpwMGo3ZGluN3V4ZVJzcVZvQlJ4Q3pUeWdGSlJRMDVWZVRXVzZyOEdnRllKUGNWcVU0MGd3ClpiazdycDZSCi0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0=
+أو قم بتوليده مجدداً:
+```bash
+base64 -w 0 "cer_ios/AuthKey_49B2H4YJHU (1).p8"
 ```
 
 #### **الخطوة 2: إضافة Secrets في GitHub**
