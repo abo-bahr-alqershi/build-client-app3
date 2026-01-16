@@ -197,6 +197,11 @@ git push origin main
 
 ## 🔍 تشخيص الأخطاء
 
+### **خطأ: expected one {} but found development**
+**السبب:** Xcode 16.4 bug مع XML format في ExportOptions.plist
+**الحل:** ✅ تم الإصلاح! نستخدم binary format بدلاً من XML
+**التفاصيل:** راجع `XCODE_16.4_FIX.md`
+
 ### **خطأ: No profiles found**
 **السبب:** Secrets غير موجودة أو خاطئة
 **الحل:** راجع الـ Secrets في GitHub

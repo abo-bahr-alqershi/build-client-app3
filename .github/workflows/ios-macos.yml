@@ -398,10 +398,13 @@ jobs:
             /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'${BUNDLE_ID}' string '$PROFILE_UUID'" "$EXPORT_OPTIONS_PLIST"
           fi
           
-          plutil -convert xml1 "$EXPORT_OPTIONS_PLIST"
+          # Xcode 16.4 FIX: تحويل إلى binary plist بدلاً من XML
+          # هذا يحل مشكلة "expected one {} but found X"
+          plutil -convert binary1 "$EXPORT_OPTIONS_PLIST"
+          
           echo ""
-          echo "--- ExportOptions.plist ---"
-          cat "$EXPORT_OPTIONS_PLIST"
+          echo "--- ExportOptions.plist (binary format for Xcode 16.4) ---"
+          plutil -p "$EXPORT_OPTIONS_PLIST"
           echo ""
           
           # Export IPA
