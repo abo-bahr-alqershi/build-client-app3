@@ -246,47 +246,106 @@ jobs:
         if: ${{ github.event_name != 'pull_request' }}
         env:
           BUNDLE_ID: com.hggzk.app
+          KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
         run: |
           set -euo pipefail
-          echo "--- Build IPA with automatic signing ---"
-          echo "Target device UDID: 00008030-001A755C2ED2402E"
-          echo "Export method: development"
+          
+          echo "--- Build Configuration (Automatic Signing) ---"
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Export Method: development"
+          echo "Signing Style: automatic"
+          echo "Note: IPA will be installable on any device in the provisioning profile"
+          echo ""
+          
+          # تنظيف كلمة مرور keychain
+          KEYCHAIN_PASSWORD_CLEAN="$(printf %s "$KEYCHAIN_PASSWORD" | tr -d '\r\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          
+          # استخراج Team ID من provisioning profile
+          PROFILE="cer_ios/Provision_Profile_2.mobileprovision"
+          PROFILE_PLIST="$RUNNER_TEMP/profile.plist"
+          security cms -D -i "$PROFILE" > "$PROFILE_PLIST"
+          TEAM_ID=$(/usr/libexec/PlistBuddy -c 'Print :TeamIdentifier:0' "$PROFILE_PLIST")
+          
+          echo "Team ID: $TEAM_ID"
+          echo ""
           
           # Build archive with automatic signing
+          echo "--- Building Archive with Automatic Signing ---"
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
             -sdk iphoneos \
-            -destination 'id=00008030-001A755C2ED2402E' \
+            -destination 'generic/platform=iOS' \
             -archivePath build/Runner.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
             archive
-          
+
+          echo ""
           echo "--- Archive created successfully ---"
           
-          # Create ExportOptions.plist for development method
+          # التحقق من محتوى Archive
+          if [ -d "build/Runner.xcarchive/Products/Applications/Runner.app" ]; then
+            echo "Runner.app Info.plist:"
+            plutil -p "build/Runner.xcarchive/Products/Applications/Runner.app/Info.plist" | grep -E "CFBundleIdentifier|CFBundleVersion|CFBundleShortVersionString" || true
+            echo ""
+            echo "Runner.app codesign info:"
+            codesign -dv "build/Runner.xcarchive/Products/Applications/Runner.app" 2>&1 | grep -E "Authority|TeamIdentifier|Identifier" || true
+          fi
+          
+          echo ""
+          echo "--- Creating ExportOptions.plist for Development ---"
+          
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          
+          # إنشاء ExportOptions.plist باستخدام PlistBuddy
           /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :method string 'development'" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :teamID string '${TEAM_ID}'" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :signingStyle string 'automatic'" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :destination string 'export'" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
+          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool false" "$EXPORT_OPTIONS_PLIST"
           /usr/libexec/PlistBuddy -c "Add :stripSwiftSymbols bool true" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:'com.hggzk.app' string ''" "$EXPORT_OPTIONS_PLIST"
+          
+          # تحويل لـ XML format للعرض
           plutil -convert xml1 "$EXPORT_OPTIONS_PLIST"
+          
           echo "--- ExportOptions.plist ---"
           cat "$EXPORT_OPTIONS_PLIST"
           echo ""
           
+          echo "--- Exporting IPA ---"
+          
+          # التأكد من أن keychain هو default
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD_CLEAN" build.keychain
+          echo "✅ Keychain unlocked and set as default"
+          
           # Export IPA
+          set +e
           xcodebuild -exportArchive \
             -archivePath build/Runner.xcarchive \
             -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
             -exportPath build/ipa \
-            -allowProvisioningUpdates
+            -allowProvisioningUpdates \
+            2>&1 | tee /tmp/export.log
+          EXPORT_EXIT_CODE=$?
+          set -e
           
-          echo "✅ IPA exported with automatic signing for device 00008030-001A755C2ED2402E"
-          ls -la build/ipa
+          if [ $EXPORT_EXIT_CODE -eq 0 ]; then
+            echo ""
+            echo "✅ IPA exported successfully with automatic signing"
+            echo "✅ Method: development"
+            echo "✅ Can be installed on any registered device in provisioning profile"
+            ls -la build/ipa
+          else
+            echo "❌ Export failed with exit code: $EXPORT_EXIT_CODE"
+            echo ""
+            echo "--- Export Log (last 50 lines) ---"
+            tail -50 /tmp/export.log
+            exit 1
+          fi
 
       - name: Upload IPA artifact
         if: ${{ github.event_name != 'pull_request' }}
