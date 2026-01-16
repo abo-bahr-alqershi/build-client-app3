@@ -376,32 +376,27 @@ jobs:
           echo "Export Method: $EXPORT_METHOD (forced for Xcode 16.4 compatibility)"
           echo ""
           
-          # CRITICAL FIX for Xcode 16.4:
-          # إنشاء ExportOptions.plist بطريقة مختلفة لتجنب parsing errors
+          # ULTIMATE FIX for Xcode 16.4:
+          # المشكلة: Xcode يتوقع {} لكن يجد string
+          # الحل: استخدام defaults write (NSUserDefaults) لإنشاء plist صحيح
           
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           
-          # إنشاء plist فارغ أولاً
-          /usr/libexec/PlistBuddy -c "Save" "$EXPORT_OPTIONS_PLIST" 2>/dev/null || true
+          # حذف الملف إن وُجد
+          rm -f "$EXPORT_OPTIONS_PLIST"
           
-          # إضافة القيم واحدة تلو الأخرى بترتيب محدد
-          /usr/libexec/PlistBuddy -c "Add :teamID string $TEAM_ID" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :compileBitcode bool false" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :uploadSymbols bool false" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :stripSwiftSymbols bool true" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :signingStyle string manual" "$EXPORT_OPTIONS_PLIST"
+          # إنشاء plist باستخدام defaults (أكثر موثوقية من PlistBuddy)
+          defaults write "$RUNNER_TEMP/ExportOptions" teamID "$TEAM_ID"
+          defaults write "$RUNNER_TEMP/ExportOptions" method "$EXPORT_METHOD"
+          defaults write "$RUNNER_TEMP/ExportOptions" signingStyle "manual"
+          defaults write "$RUNNER_TEMP/ExportOptions" compileBitcode -bool false
+          defaults write "$RUNNER_TEMP/ExportOptions" uploadSymbols -bool false
+          defaults write "$RUNNER_TEMP/ExportOptions" stripSwiftSymbols -bool true
           
-          # إضافة provisioningProfiles
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles dict" "$EXPORT_OPTIONS_PLIST"
-          /usr/libexec/PlistBuddy -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_UUID" "$EXPORT_OPTIONS_PLIST"
+          # إضافة provisioningProfiles dictionary
+          defaults write "$RUNNER_TEMP/ExportOptions" provisioningProfiles -dict-add "$BUNDLE_ID" "$PROFILE_UUID"
           
-          # إضافة method في النهاية بدون string type
-          /usr/libexec/PlistBuddy -c "Add :method string development" "$EXPORT_OPTIONS_PLIST"
-          
-          # تحويل إلى binary format
-          plutil -convert binary1 "$EXPORT_OPTIONS_PLIST"
-          
-          echo "--- ExportOptions.plist (Xcode 16.4 compatible) ---"
+          echo "--- ExportOptions.plist (defaults method) ---"
           plutil -p "$EXPORT_OPTIONS_PLIST"
           echo ""
           
@@ -416,47 +411,18 @@ jobs:
               -authenticationKeyIssuerID "$API_ISSUER_ID" \
               -allowProvisioningUpdates
           else
-            # محاولة export مع تسجيل الأخطاء
-            set +e
             xcodebuild -exportArchive \
               -archivePath build/Runner.xcarchive \
               -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
               -exportPath build/ipa \
-              -allowProvisioningUpdates \
-              2>&1 | tee /tmp/export_attempt.log
-            EXPORT_CODE=$?
-            set -e
-            
-            # إذا فشل مع development، جرب ad-hoc
-            if [ $EXPORT_CODE -ne 0 ]; then
-              echo ""
-              echo "⚠️  Export failed with development method"
-              echo "🔄 Retrying with ad-hoc method..."
-              
-              # تغيير method إلى ad-hoc
-              /usr/libexec/PlistBuddy -c "Set :method ad-hoc" "$EXPORT_OPTIONS_PLIST"
-              plutil -convert binary1 "$EXPORT_OPTIONS_PLIST"
-              
-              echo "Updated ExportOptions.plist:"
-              plutil -p "$EXPORT_OPTIONS_PLIST"
-              echo ""
-              
-              xcodebuild -exportArchive \
-                -archivePath build/Runner.xcarchive \
-                -exportOptionsPlist "$EXPORT_OPTIONS_PLIST" \
-                -exportPath build/ipa \
-                -allowProvisioningUpdates
-              
-              EXPORT_METHOD="ad-hoc"
-              echo "✅ Export succeeded with ad-hoc method"
-            fi
+              -allowProvisioningUpdates
           fi
           
           echo ""
           echo "==================================="
           echo "✅ IPA Export Successful!"
           echo "==================================="
-          echo "📦 Export Method: $EXPORT_METHOD"
+          echo "📦 Export Method: development"
           if [ "$USE_API_KEY" = true ]; then
             echo "🔐 Signing: Automatic (API Key)"
           else
