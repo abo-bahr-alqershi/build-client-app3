@@ -256,15 +256,15 @@ jobs:
           
           if [ "$HAS_DEVICES" = "true" ]; then
             if [ "$GET_TASK_ALLOW_VALUE" = "true" ]; then
-              EXPORT_METHOD="development"
-              echo "✅ Detected: Development provisioning profile"
+              EXPORT_METHOD="debugging"
+              echo "✅ Detected: Development provisioning profile (using 'debugging' for Xcode 26+)"
             else
-              EXPORT_METHOD="ad-hoc"
-              echo "✅ Detected: Ad-Hoc provisioning profile"
+              EXPORT_METHOD="release-testing"
+              echo "✅ Detected: Ad-Hoc provisioning profile (using 'release-testing' for Xcode 26+)"
             fi
           else
-            EXPORT_METHOD="app-store"
-            echo "✅ Detected: App Store provisioning profile"
+            EXPORT_METHOD="app-store-connect"
+            echo "✅ Detected: App Store provisioning profile (using 'app-store-connect' for Xcode 26+)"
           fi
           
           echo "Profile Name: $PROFILE_NAME"
@@ -369,16 +369,15 @@ jobs:
           # إنشاء ExportOptions.plist
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           
-          # تحديد export method - استخدام development دائماً
-          # حتى مع Ad-Hoc profile (Xcode 16.4 workaround)
-          EXPORT_METHOD="development"
+          # تحديد export method - استخدام debugging دائماً
+          # في Xcode 26+: development → debugging (new naming)
+          EXPORT_METHOD="debugging"
           
-          echo "Export Method: $EXPORT_METHOD (forced for Xcode 16.4 compatibility)"
+          echo "Export Method: $EXPORT_METHOD (Xcode 26+ naming - was 'development' in older versions)"
           echo ""
           
-          # ULTIMATE FIX for Xcode 16.4:
-          # المشكلة: Xcode يتوقع {} لكن يجد string
-          # الحل: استخدام defaults write (NSUserDefaults) لإنشاء plist صحيح
+          # إنشاء ExportOptions.plist باستخدام defaults write
+          # ثم تحويله إلى XML format (xcodebuild يحتاج XML وليس binary)
           
           EXPORT_OPTIONS_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           
@@ -395,6 +394,12 @@ jobs:
           
           # إضافة provisioningProfiles dictionary
           defaults write "$RUNNER_TEMP/ExportOptions" provisioningProfiles -dict-add "$BUNDLE_ID" "$PROFILE_UUID"
+          
+          # CRITICAL FIX: Convert binary plist to XML format
+          # defaults write creates binary plist, but xcodebuild expects XML format
+          # This fixes: "exportOptionsPlist error for key 'method': expected one {}"
+          # Reference: https://openradar.appspot.com/22740827
+          plutil -convert xml1 "$EXPORT_OPTIONS_PLIST"
           
           echo "--- ExportOptions.plist (defaults method) ---"
           plutil -p "$EXPORT_OPTIONS_PLIST"
@@ -422,7 +427,7 @@ jobs:
           echo "==================================="
           echo "✅ IPA Export Successful!"
           echo "==================================="
-          echo "📦 Export Method: development"
+          echo "📦 Export Method: $EXPORT_METHOD"
           if [ "$USE_API_KEY" = true ]; then
             echo "🔐 Signing: Automatic (API Key)"
           else
